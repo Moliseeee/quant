@@ -1,0 +1,26 @@
+# secrets
+.env
+*.token
+
+# python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# data
+data/cache/
+data/output/
+*.csv.bak
+
+# ide
+.idea/
+.vscode/
+.DS_Store
+
+# 回测产物
+*.png
+backtest_*.html

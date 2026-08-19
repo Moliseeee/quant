@@ -1,0 +1,12 @@
+# 运行时依赖
+pandas>=2.0
+numpy>=1.24
+pydantic>=2.5
+python-dotenv>=1.0
+matplotlib>=3.7
+scipy>=1.10
+tushare>=1.2.89
+
+# 开发依赖
+pytest>=7.4
+pytest-cov>=4.1
