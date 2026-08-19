@@ -29,6 +29,26 @@ cp .env.example .env                             # 填入 TUSHARE_TOKEN
 .venv\Scripts\python.exe -m pytest               # 跑测试
 ```
 
+### 风控参数（实盘生存第一道防线）
+
+```bash
+# 止损 8% + 单票仓位 80% + 累计回撤熔断 15%
+.venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --strategy macd \
+    --stop-loss 0.08 --max-position 0.8 --drawdown 0.15
+```
+
+| 参数 | 说明 |
+|---|---|
+| `--stop-loss` | 固定止损：收盘破成本×N% 次日离场，离场后需新买入信号才进场 |
+| `--trailing-stop` | 移动止盈：收盘破持仓峰值×N% 锁利离场 |
+| `--max-position` | 单笔买入资金上限（0-1），防满仓单票 |
+| `--daily-loss` | 当日亏损熔断：单日亏 N% 次日禁止开新仓 |
+| `--drawdown` | 累计回撤熔断：亏 N% 清仓并永久停手 |
+
+实测（600744.SH + MACD, 2023~2026）：
+- 无风控：总收益 -26%，**最大回撤 53%**
+- 有风控：总收益 -20%，**最大回撤 20%**（止损/熔断把灾难性回撤压成可控回撤）
+
 ## 模块结构
 
 ```
@@ -36,7 +56,7 @@ src/quant/
 ├── config.py          # pydantic 配置，敏感信息走环境变量
 ├── data/              # DataFeed 抽象（Tushare/CSV）+ 本地缓存 + 数据质检
 ├── backtest/
-│   ├── engine.py      # 向量化引擎：T+1 成交、涨跌停/停牌/整手约束
+│   ├── engine.py      # 向量化引擎：T+1 成交、涨跌停/停牌/整手约束、风控钩子
 │   ├── costs.py       # A股成本模型（佣金/印花税/过户费/滑点）
 │   └── metrics.py     # 16+ 绩效指标
 ├── strategies/        # 策略接口 + 5 个技术策略（sma/macd/boll/rsi/breakout）

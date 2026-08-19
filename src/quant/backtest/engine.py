@@ -136,27 +136,62 @@ class BacktestEngine:
         trades: list[Trade] = []
         equity_vals = np.zeros(len(df))
         lot = bt.lot_size
+        risk = self.config.risk
+
+        # 风控状态
+        peak_price = 0.0            # 持仓期间最高价（移动止盈）
+        breaker_triggered = False   # 回撤熔断：一旦触发清仓并永久停手
+        no_buy_decision = False     # 当日亏损熔断：今日收盘禁止产生买入决策（次日执行）
+        stopout = False             # 止损/止盈离场：等待新的买入信号（0→1 沿）才允许进场
 
         for i, (date, row) in enumerate(df.iterrows()):
-            target = holding.iloc[i]
-            price = float(exec_price.iloc[i])
             close = float(row["close"])
+            high = float(row["high"])
+
+            # ========== 风控修正"今日收盘将产生的新决策"（次日执行，无前视） ==========
+            if i + 1 < len(df):
+                # 1. 回撤熔断：永不产生买入
+                if breaker_triggered:
+                    holding.iloc[i + 1] = 0.0
+                # 2. 当日亏损熔断：空仓时不产生买入
+                elif no_buy_decision and holding.iloc[i] < 0.5:
+                    holding.iloc[i + 1] = 0.0
+                # 3. 止损/止盈状态机：当日收盘破位 → 明日离场；离场后需新信号
+                if stopout:
+                    # 等待原始信号的 0→1 沿（今日 0、明日 1 = 新买入决策）
+                    if signal.iloc[i + 1] > 0.5 and signal.iloc[i] < 0.5:
+                        stopout = False  # 新信号，允许重新进场
+                    else:
+                        holding.iloc[i + 1] = 0.0
+                elif shares > 0 and open_trade is not None:
+                    if risk.stop_loss_pct and close <= open_trade.price * (1 - risk.stop_loss_pct):
+                        holding.iloc[i + 1] = 0.0  # 固定止损
+                        stopout = True
+                    elif risk.trailing_stop_pct and peak_price > 0 \
+                            and close <= peak_price * (1 - risk.trailing_stop_pct):
+                        holding.iloc[i + 1] = 0.0  # 移动止盈
+                        stopout = True
+
+            target = float(holding.iloc[i])
+            price = float(exec_price.iloc[i])
 
             if target > 0.5 and shares == 0:
-                # 买入：现金约束 + 整手约束
-                # 实际成本：佣金率 + 过户费 + 滑点
+                # 买入：仓位上限 + 现金约束 + 整手约束
                 rate_total = (
                     self.config.costs.commission_rate
                     + self.config.costs.transfer_fee
                 )
+                # 3. 仓位上限：买入预算 = 可用资金 × max_position_pct
+                budget = cash * risk.max_position_pct
                 max_shares = int(
-                    cash * (1 - bt.min_cash_reserve) / (price * (1 + rate_total) + self.config.costs.slippage)
+                    budget / (price * (1 + rate_total) + self.config.costs.slippage)
                 )
                 buy_shares = (max_shares // lot) * lot
                 if buy_shares >= lot:
                     cost = self.costs.buy_cost(price, buy_shares)
                     cash -= price * buy_shares + cost.total
                     shares = buy_shares
+                    peak_price = high  # 持仓峰值从买入当日开始
                     open_trade = Trade(
                         date=date, action="BUY", price=price,
                         shares=buy_shares, gross_amount=price * buy_shares,
@@ -179,8 +214,29 @@ class BacktestEngine:
                 trades.append(sell)
                 open_trade = None
                 shares = 0
+                peak_price = 0.0
 
+            # 更新持仓峰值（盘中高点）
+            if shares > 0:
+                peak_price = max(peak_price, high)
+
+            # 当日净值（收盘市值）
             equity_vals[i] = cash + shares * close
+
+            # ========== 熔断状态更新（当日收盘后判定，作用于明日决策） ==========
+            no_buy_decision = False  # 默认明日恢复
+            if risk.drawdown_limit:
+                running_max = float(np.max(equity_vals[: i + 1]))
+                if running_max > 0 and (1 - equity_vals[i] / running_max) >= risk.drawdown_limit:
+                    breaker_triggered = True
+                    if i + 1 < len(df):
+                        holding.iloc[i + 1] = 0.0  # 取消已排队决策，清仓
+            if risk.daily_loss_limit and i > 0 and equity_vals[i - 1] > 0:
+                day_ret = equity_vals[i] / equity_vals[i - 1] - 1
+                if day_ret <= -risk.daily_loss_limit:
+                    no_buy_decision = True
+                    if i + 1 < len(df) and holding.iloc[i] < 0.5:
+                        holding.iloc[i + 1] = 0.0  # 取消今日已产生的买入决策
 
         equity = pd.Series(equity_vals, index=df.index, name="equity")
         result_df = df.copy()

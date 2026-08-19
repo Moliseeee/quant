@@ -68,12 +68,32 @@ class BacktestConfig(BaseModel):
     min_cash_reserve: float = 0.0             # 预留现金比例（0-1）
 
 
+class RiskConfig(BaseModel):
+    """风控配置 —— 实盘生存的第一道防线（回测与实盘共用同一套）。
+
+    全部为可选，None/0 表示关闭对应规则。默认全关，保证与旧行为兼容；
+    实盘建议至少开启 stop_loss_pct + max_position_pct。
+    """
+
+    # 1. 固定止损：收盘价 ≤ 持仓成本 × (1 - pct) → 次日卖出
+    stop_loss_pct: float | None = None
+    # 2. 移动止盈：收盘价 ≤ 持仓期最高价 × (1 - pct) → 次日卖出
+    trailing_stop_pct: float | None = None
+    # 3. 单笔仓位上限：买入资金 ≤ 当前可用资金 × pct（0-1，防满仓单票）
+    max_position_pct: float = 1.0
+    # 4. 当日亏损熔断：当日净值较前收跌幅 ≥ pct → 当日停止开新仓
+    daily_loss_limit: float | None = None
+    # 5. 累计回撤熔断：净值较历史峰值回撤 ≥ pct → 清仓并停止交易
+    drawdown_limit: float | None = None
+
+
 class Config(BaseModel):
     """全局配置。"""
 
     data: DataConfig = Field(default_factory=DataConfig)
     costs: CostConfig = Field(default_factory=CostConfig)
     backtest: BacktestConfig = Field(default_factory=BacktestConfig)
+    risk: RiskConfig = Field(default_factory=RiskConfig)
 
     @field_validator("backtest")
     @classmethod

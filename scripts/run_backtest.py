@@ -35,6 +35,12 @@ def main() -> None:
     ap.add_argument("--capital", type=float, default=20_000)
     ap.add_argument("--execution", choices=["next_open", "next_close"], default="next_open")
     ap.add_argument("--no-cache", action="store_true")
+    # 风控参数
+    ap.add_argument("--stop-loss", type=float, default=None, help="固定止损比例，如 0.08 = -8%")
+    ap.add_argument("--trailing-stop", type=float, default=None, help="移动止盈回撤比例，如 0.10")
+    ap.add_argument("--max-position", type=float, default=1.0, help="单笔仓位上限（0-1）")
+    ap.add_argument("--daily-loss", type=float, default=None, help="当日亏损熔断，如 0.03")
+    ap.add_argument("--drawdown", type=float, default=None, help="累计回撤熔断，如 0.15")
     args = ap.parse_args()
 
     cfg = Config.load()
@@ -42,6 +48,12 @@ def main() -> None:
     cfg.backtest.execution = args.execution
     if args.no_cache:
         cfg.data.use_cache = False
+    # 应用风控参数
+    cfg.risk.stop_loss_pct = args.stop_loss
+    cfg.risk.trailing_stop_pct = args.trailing_stop
+    cfg.risk.max_position_pct = args.max_position
+    cfg.risk.daily_loss_limit = args.daily_loss
+    cfg.risk.drawdown_limit = args.drawdown
 
     feed = get_feed(cfg.data.provider, token=cfg.data.tushare_token,
                     cache_dir=cfg.data.cache_dir if cfg.data.use_cache else None)
