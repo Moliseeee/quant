@@ -61,6 +61,41 @@ class TestStopLoss:
         assert all(t.action == "BUY" for t in result.trades)  # 无卖出
 
 
+class TestStopoutDeadlock:
+    """Kimi 审查 P1 回归：止损触发恰逢信号 1→0 当天时，0→1 沿不得被永久错过。
+
+    复现场景（Kimi 模糊测试 1% 分岔组）:
+        信号:  1 1 1 0 1 1 1 1   (bar3 止损，恰好是信号 1→0 当天)
+        buggy: [BUY@1, SELL@4]            ← 死锁：止损后再无成交
+        fixed: [BUY@1, SELL@4, BUY@5]     ← 正常：bar5 按新沿重新进场
+    """
+
+    def test_reenry_after_stopout_uses_new_edge(self):
+        # bar3 (index3) 收盘 9.5 ≤ 成本 10.52×0.92=9.678 → 止损触发
+        df = make_prices([10, 10.5, 11, 9.5, 9, 9.5, 10, 10.5])
+        sig = pd.Series(0.0, index=df.index)
+        sig.iloc[:3] = 1.0   # bar0-2 持有
+        sig.iloc[4:] = 1.0   # bar4 起重新想持有（0→1 沿在 bar4）
+        cfg = config_with(stop_loss_pct=0.08)
+        result = BacktestEngine(cfg).run(df, sig)
+        actions = [(t.action, t.date) for t in result.trades]
+        assert actions == [
+            ("BUY", df.index[1]),
+            ("SELL", df.index[4]),
+            ("BUY", df.index[5]),   # 新沿后重新进场（修复前此处死锁）
+        ]
+
+    def test_no_reenry_without_new_edge(self):
+        """信号持续为 1（无 0→1 沿）时，止损后不应自动买回。"""
+        df = make_prices([10, 10.5, 11, 9.5, 9, 9.5, 10, 10.5])
+        sig = pd.Series(1.0, index=df.index)  # 一直持有，无沿
+        cfg = config_with(stop_loss_pct=0.08)
+        result = BacktestEngine(cfg).run(df, sig)
+        buys = [t for t in result.trades if t.action == "BUY"]
+        sells = [t for t in result.trades if t.action == "SELL"]
+        assert len(buys) == 1 and len(sells) == 1  # 止损后不再进场
+
+
 class TestTrailingStop:
     def test_trailing_stop_locks_profit(self):
         """涨到峰值 16 后回落 10% → 止盈卖出，且卖出价 > 买入价（锁利）。"""

@@ -16,7 +16,7 @@
 | 因子 | 无验证、方向矛盾 | **IC/IR/分层检验 + 行业市值中性化 + winsorize** |
 | 过拟合防护 | 无 | **walk-forward 样本外验证** |
 | 敏感信息 | iFinD 密码明文 | 全部走 `.env`（`.gitignore` 排除） |
-| 工程化 | 无测试无依赖管理 | pytest 27 用例 + pyproject/requirements |
+| 工程化 | 无测试无依赖管理 | pytest 42 用例 + pyproject/requirements |
 
 ## 快速开始
 

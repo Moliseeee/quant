@@ -91,7 +91,8 @@ class BacktestEngine:
 
         limit = compute_limit_prices(df, bt.limit_pct)
         exec_price = df["open"] if bt.execution == "next_open" else df["close"]
-        suspended = df["volume"].fillna(0) <= 0
+        # 停牌判定：open 缺失为主（数据商对停牌日常做价格前向填充，volume=0 为兜底）
+        suspended = df["open"].isna() | (df["volume"].fillna(0) <= 0)
 
         blocked_buy = (exec_price >= limit["limit_up"]) | suspended
         blocked_sell = (exec_price <= limit["limit_down"]) | suspended
@@ -143,6 +144,7 @@ class BacktestEngine:
         breaker_triggered = False   # 回撤熔断：一旦触发清仓并永久停手
         no_buy_decision = False     # 当日亏损熔断：今日收盘禁止产生买入决策（次日执行）
         stopout = False             # 止损/止盈离场：等待新的买入信号（0→1 沿）才允许进场
+        prev_signal = 0.0           # 昨日信号（沿检测：Kimi 审查修复，杜绝索引偏移/越界读未来）
 
         for i, (date, row) in enumerate(df.iterrows()):
             close = float(row["close"])
@@ -158,9 +160,10 @@ class BacktestEngine:
                     holding.iloc[i + 1] = 0.0
                 # 3. 止损/止盈状态机：当日收盘破位 → 明日离场；离场后需新信号
                 if stopout:
-                    # 等待原始信号的 0→1 沿（今日 0、明日 1 = 新买入决策）
-                    if signal.iloc[i + 1] > 0.5 and signal.iloc[i] < 0.5:
-                        stopout = False  # 新信号，允许重新进场
+                    # 沿检测用昨日信号状态（prev_signal），只读今日及之前信息，无前视
+                    # 0→1 沿 = 今日 signal=1 且昨日 signal=0 → 放行明日进场
+                    if signal.iloc[i] > 0.5 and prev_signal < 0.5:
+                        stopout = False  # 新买入信号，允许明日进场
                     else:
                         holding.iloc[i + 1] = 0.0
                 elif shares > 0 and open_trade is not None:
@@ -237,6 +240,8 @@ class BacktestEngine:
                     no_buy_decision = True
                     if i + 1 < len(df) and holding.iloc[i] < 0.5:
                         holding.iloc[i + 1] = 0.0  # 取消今日已产生的买入决策
+
+            prev_signal = float(signal.iloc[i])  # 更新沿检测状态（供明日使用）
 
         equity = pd.Series(equity_vals, index=df.index, name="equity")
         result_df = df.copy()
