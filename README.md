@@ -32,14 +32,25 @@ uv venv .venv && uv pip install -e ".[dev]"     # 或 pip install -e ".[dev]"
 
 | 数据源 | 费用 | 说明 |
 |---|---|---|
-| `akshare`（**默认**） | 免费、无 token | 东财/新浪公开接口：日线（复权）、全市场快照（PE/PB/市值）、财务。国内站自动直连绕过代理 |
-| `tushare` | 注册免费（高级接口需积分） | `daily` 日线可用；`daily_basic`（PE/PB）需 2000 积分 |
+| `tushare` | 用户 2120 积分（至 2027-01-21） | **主力**：日线 + adj_factor 复权因子 + `daily_basic`（PE/PB/PS/市值/换手/股息率，选股核心）。复权采用"未复权+因子表"方案，增量更新不污染历史价（Kimi 审查 P4 修复） |
+| `akshare`（默认无 token 时） | 免费、无 token | 备份：东财/新浪公开接口，国内站自动直连绕过代理 |
 | `csv` | 免费 | 本地 CSV（含存量 `v1/ifind_weekly/` 数据） |
 
 ```bash
 # 显式指定数据源
-.venv\Scripts\python.exe scripts\run_backtest.py --provider akshare --symbol 600744.SH
+.venv\Scripts\python.exe scripts\run_backtest.py --provider tushare --symbol 600744.SH
 ```
+
+### 全市场因子数据抓取（因子研究原料）
+
+```bash
+# 抓 2023 至今的周频全市场因子截面（PE/PB/PS/市值/换手/股息率），存 parquet
+.venv\Scripts\python.exe scripts\fetch_factor_data.py --start 20230101 --end 20260723
+# 测试只拉 3 个截面
+.venv\Scripts\python.exe scripts\fetch_factor_data.py --limit 3
+```
+
+输出：`data/cache/factor_panels/<交易日>.parquet`（每个截面 ~5500 只股票），直接供 `quant/factors/` 的 RankIC/ICIR/分层检验使用。
 
 ### 风控参数（实盘生存第一道防线）
 
