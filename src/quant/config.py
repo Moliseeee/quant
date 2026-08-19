@@ -30,7 +30,7 @@ def _env(name: str, default: str = "") -> str:
 class DataConfig(BaseModel):
     """数据源配置。"""
 
-    provider: Literal["tushare", "csv"] = "tushare"
+    provider: Literal["tushare", "akshare", "csv"] = "akshare"
     tushare_token: str = Field(default_factory=lambda: _env("TUSHARE_TOKEN"))
     csv_path: Path | None = None
     # 本地缓存：下载过的数据存 parquet，重复运行不重复拉取
@@ -83,7 +83,13 @@ class RiskConfig(BaseModel):
     max_position_pct: float = 1.0
     # 4. 当日亏损熔断：当日净值较前收跌幅 ≥ pct → 当日停止开新仓
     daily_loss_limit: float | None = None
-    # 5. 累计回撤熔断：净值较历史峰值回撤 ≥ pct → 清仓并停止交易
+    # 5a. 分级回撤熔断（推荐语义，Kimi 审查建议）：
+    #      [(回撤阈值, 剩余仓位比例), ...]，按阈值升序。
+    #      例 [(0.10, 0.5), (0.15, 0.0)] = 回撤 10% 仓位减半，回撤 15% 清仓停手（等人工复核）。
+    #      回撤从历史峰值计算，创新高后自动恢复满仓。
+    #      0/1 模型简化：降仓只影响后续新买入预算，不强制减半现有持仓。
+    drawdown_stages: list[tuple[float, float]] = []
+    # 5b. 简单回撤熔断（旧语义）：累计回撤 ≥ pct → 清仓并永久停手
     drawdown_limit: float | None = None
 
 

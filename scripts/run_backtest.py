@@ -30,6 +30,8 @@ def main() -> None:
     ap.add_argument("--strategy", default="macd",
                     help="sma/macd/boll/rsi/breakout")
     ap.add_argument("--all", action="store_true", help="跑全部策略对比")
+    ap.add_argument("--provider", choices=["tushare", "akshare", "csv"], default=None,
+                    help="数据源（默认 akshare，免费免 token；tushare 需 .env token）")
     ap.add_argument("--start", default="2023-01-01")
     ap.add_argument("--end", default="2026-07-23")
     ap.add_argument("--capital", type=float, default=20_000)
@@ -40,10 +42,14 @@ def main() -> None:
     ap.add_argument("--trailing-stop", type=float, default=None, help="移动止盈回撤比例，如 0.10")
     ap.add_argument("--max-position", type=float, default=1.0, help="单笔仓位上限（0-1）")
     ap.add_argument("--daily-loss", type=float, default=None, help="当日亏损熔断，如 0.03")
-    ap.add_argument("--drawdown", type=float, default=None, help="累计回撤熔断，如 0.15")
+    ap.add_argument("--drawdown", type=float, default=None, help="简单回撤熔断（清仓停手），如 0.15")
+    ap.add_argument("--drawdown-stages", type=str, default=None,
+                    help="分级回撤熔断，格式 '阈值,剩余仓位;阈值,剩余仓位'，如 '0.10,0.5;0.15,0.0'")
     args = ap.parse_args()
 
     cfg = Config.load()
+    if args.provider:
+        cfg.data.provider = args.provider
     cfg.backtest.initial_capital = args.capital
     cfg.backtest.execution = args.execution
     if args.no_cache:
@@ -54,6 +60,13 @@ def main() -> None:
     cfg.risk.max_position_pct = args.max_position
     cfg.risk.daily_loss_limit = args.daily_loss
     cfg.risk.drawdown_limit = args.drawdown
+    if args.drawdown_stages:
+        # 解析 "0.10,0.5;0.15,0.0" → [(0.10, 0.5), (0.15, 0.0)]
+        cfg.risk.drawdown_stages = [
+            (float(a), float(b))
+            for pair in args.drawdown_stages.split(";")
+            for a, b in [pair.split(",")]
+        ]
 
     feed = get_feed(cfg.data.provider, token=cfg.data.tushare_token,
                     cache_dir=cfg.data.cache_dir if cfg.data.use_cache else None)

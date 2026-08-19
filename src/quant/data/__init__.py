@@ -1,5 +1,6 @@
 """data 子包：数据源抽象 + 质量控制。"""
 
+from .akshare_feed import AkShareFeed
 from .base import DataFeed
 from .csv_feed import CSVFeed, get_feed
 from .quality import (
@@ -15,6 +16,7 @@ __all__ = [
     "DataFeed",
     "CSVFeed",
     "TushareFeed",
+    "AkShareFeed",
     "get_feed",
     "normalize_columns",
     "run_quality_report",

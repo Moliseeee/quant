@@ -145,6 +145,7 @@ class BacktestEngine:
         no_buy_decision = False     # 当日亏损熔断：今日收盘禁止产生买入决策（次日执行）
         stopout = False             # 止损/止盈离场：等待新的买入信号（0→1 沿）才允许进场
         prev_signal = 0.0           # 昨日信号（沿检测：Kimi 审查修复，杜绝索引偏移/越界读未来）
+        position_scale = 1.0        # 分级回撤熔断的当前仓位比例（1.0=满仓，0.5=减半，0=停手）
 
         for i, (date, row) in enumerate(df.iterrows()):
             close = float(row["close"])
@@ -184,8 +185,8 @@ class BacktestEngine:
                     self.config.costs.commission_rate
                     + self.config.costs.transfer_fee
                 )
-                # 3. 仓位上限：买入预算 = 可用资金 × max_position_pct
-                budget = cash * risk.max_position_pct
+                # 3. 仓位上限：买入预算 = 可用资金 × max_position_pct × 分级熔断比例
+                budget = cash * risk.max_position_pct * position_scale
                 max_shares = int(
                     budget / (price * (1 + rate_total) + self.config.costs.slippage)
                 )
@@ -228,9 +229,22 @@ class BacktestEngine:
 
             # ========== 熔断状态更新（当日收盘后判定，作用于明日决策） ==========
             no_buy_decision = False  # 默认明日恢复
-            if risk.drawdown_limit:
-                running_max = float(np.max(equity_vals[: i + 1]))
-                if running_max > 0 and (1 - equity_vals[i] / running_max) >= risk.drawdown_limit:
+            running_max = float(np.max(equity_vals[: i + 1]))
+            if running_max > 0:
+                current_dd = 1 - equity_vals[i] / running_max
+                # 5a. 分级回撤熔断（推荐语义）：降仓比例；回撤修复（创新高）自动恢复满仓
+                if risk.drawdown_stages:
+                    scale = 1.0
+                    for threshold, target_scale in sorted(risk.drawdown_stages):
+                        if current_dd >= threshold:
+                            scale = min(scale, target_scale)
+                    position_scale = scale
+                    if scale <= 0:
+                        breaker_triggered = True
+                        if i + 1 < len(df):
+                            holding.iloc[i + 1] = 0.0  # 取消已排队决策，清仓停手
+                # 5b. 简单回撤熔断（旧语义）：清仓并永久停手
+                if risk.drawdown_limit and current_dd >= risk.drawdown_limit:
                     breaker_triggered = True
                     if i + 1 < len(df):
                         holding.iloc[i + 1] = 0.0  # 取消已排队决策，清仓

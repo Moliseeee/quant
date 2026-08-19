@@ -163,3 +163,40 @@ class TestDrawdownCircuitBreaker:
         assert len(trades) == 2
         # 清仓后信号仍为 1，但熔断阻止了任何新买入 → 验证 equity 不再有 BUY 段
         assert result.df["holding"].iloc[-1] == 0.0
+
+
+class TestStagedDrawdown:
+    """分级回撤熔断（Kimi 建议语义）：-10% 减半、-15% 清仓停手，创新高恢复。"""
+
+    def _prices(self):
+        # index3 峰值 13 → index4=11.7(-10%) → index5=11(-15.4%) → index6=12(反弹) → index7=13(新高)
+        return make_prices([10, 10.5, 12, 13, 11.7, 11, 12, 13])
+
+    def test_scale_down_halves_budget(self):
+        """回撤 10% → 买入预算减半（max_position_pct=1.0 时只投 50% 资金）。"""
+        df = self._prices()
+        sig = hold_signal(df)  # 一直想持有
+        cfg = config_with(drawdown_stages=[(0.10, 0.5), (0.15, 0.0)])
+        cfg.backtest.initial_capital = 20_000.0
+        result = BacktestEngine(cfg).run(df, sig)
+        buys = [t for t in result.trades if t.action == "BUY"]
+        assert len(buys) >= 1
+        # 首次买入在 index1：峰值前满仓 ≈ 20000
+        assert buys[0].gross_amount > 15000
+        # 回撤 10% 后（index4 收盘触发）的新买入预算减半
+        for b in buys[1:]:
+            assert b.gross_amount <= 20000 * 0.5 * 1.05
+
+    def test_stage_zero_liquidates_and_stops(self):
+        """回撤 15% → 清仓停手（与旧 breaker 一致）。"""
+        df = self._prices()
+        sig = hold_signal(df)
+        cfg = config_with(drawdown_stages=[(0.10, 0.5), (0.15, 0.0)])
+        result = BacktestEngine(cfg).run(df, sig)
+        sells = [t for t in result.trades if t.action == "SELL"]
+        buys = [t for t in result.trades if t.action == "BUY"]
+        assert len(sells) == 1  # 只清仓一次
+        # 触发时序：峰值 13（index3），index5 close=11 ≤ 13×0.85=11.05 → 次日清仓
+        assert sells[0].date == df.index[6]
+        # 清仓后无新买入
+        assert result.df["holding"].iloc[-1] == 0.0

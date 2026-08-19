@@ -33,6 +33,10 @@ def get_feed(provider: str, **kwargs) -> DataFeed:
         from .tushare_feed import TushareFeed
 
         return TushareFeed(kwargs["token"], kwargs.get("cache_dir"))
+    if provider == "akshare":
+        from .akshare_feed import AkShareFeed
+
+        return AkShareFeed(kwargs.get("cache_dir"))
     if provider == "csv":
         return CSVFeed(kwargs["path"])
     raise ValueError(f"未知数据源: {provider}")

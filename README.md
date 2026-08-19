@@ -23,18 +23,30 @@
 ```bash
 cd quant
 uv venv .venv && uv pip install -e ".[dev]"     # 或 pip install -e ".[dev]"
-cp .env.example .env                             # 填入 TUSHARE_TOKEN
 .venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --strategy macd
 .venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --all   # 全策略对比
 .venv\Scripts\python.exe -m pytest               # 跑测试
 ```
 
+### 数据源（免费优先，无需付费额度）
+
+| 数据源 | 费用 | 说明 |
+|---|---|---|
+| `akshare`（**默认**） | 免费、无 token | 东财/新浪公开接口：日线（复权）、全市场快照（PE/PB/市值）、财务。国内站自动直连绕过代理 |
+| `tushare` | 注册免费（高级接口需积分） | `daily` 日线可用；`daily_basic`（PE/PB）需 2000 积分 |
+| `csv` | 免费 | 本地 CSV（含存量 `v1/ifind_weekly/` 数据） |
+
+```bash
+# 显式指定数据源
+.venv\Scripts\python.exe scripts\run_backtest.py --provider akshare --symbol 600744.SH
+```
+
 ### 风控参数（实盘生存第一道防线）
 
 ```bash
-# 止损 8% + 单票仓位 80% + 累计回撤熔断 15%
+# 止损 8% + 单票仓位 80% + 分级回撤熔断（-10% 仓位减半、-15% 清仓停手等人工复核）
 .venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --strategy macd \
-    --stop-loss 0.08 --max-position 0.8 --drawdown 0.15
+    --stop-loss 0.08 --max-position 0.8 --drawdown-stages "0.10,0.5;0.15,0.0"
 ```
 
 | 参数 | 说明 |
@@ -43,7 +55,8 @@ cp .env.example .env                             # 填入 TUSHARE_TOKEN
 | `--trailing-stop` | 移动止盈：收盘破持仓峰值×N% 锁利离场 |
 | `--max-position` | 单笔买入资金上限（0-1），防满仓单票 |
 | `--daily-loss` | 当日亏损熔断：单日亏 N% 次日禁止开新仓 |
-| `--drawdown` | 累计回撤熔断：亏 N% 清仓并永久停手 |
+| `--drawdown` | 简单回撤熔断：亏 N% 清仓并永久停手（旧语义） |
+| `--drawdown-stages` | **分级回撤熔断（推荐）**：`"阈值,剩余仓位;阈值,剩余仓位"`，创新高自动恢复满仓 |
 
 实测（600744.SH + MACD, 2023~2026）：
 - 无风控：总收益 -26%，**最大回撤 53%**
