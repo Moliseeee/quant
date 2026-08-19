@@ -53,7 +53,10 @@ class TushareFeed(DataFeed):
 
     def _save_cache(self, df: pd.DataFrame, symbol: str, adjust: str) -> None:
         self._cache_dir.mkdir(parents=True, exist_ok=True)
-        df.reset_index().to_parquet(self._cache_path(symbol, adjust), index=False)
+        # rename_axis 统一 index 名，保证读回时能恢复为 date 列
+        df.rename_axis("date").reset_index().to_parquet(
+            self._cache_path(symbol, adjust), index=False
+        )
 
     def load(self, symbol: str, start: str, end: str, adjust: str = "hfq") -> pd.DataFrame:
         cached = self._load_cache(symbol, adjust)
