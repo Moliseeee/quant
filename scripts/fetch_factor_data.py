@@ -43,6 +43,7 @@ def main() -> None:
     ap.add_argument("--freq", choices=["daily", "weekly"], default="weekly",
                     help="截面频率（weekly 省 API 额度）")
     ap.add_argument("--limit", type=int, default=0, help="只拉前 N 个截面（测试用，0=全部）")
+    ap.add_argument("--force", action="store_true", help="强制重拉已存在的截面（字段升级时用）")
     args = ap.parse_args()
 
     cfg = Config.load()
@@ -62,11 +63,11 @@ def main() -> None:
     out_dir = Path(__file__).resolve().parents[1] / "data" / "cache" / "factor_panels"
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    fields = "ts_code,trade_date,close,pe,pb,ps,total_mv,circ_mv,turnover_rate,dv_ttm"
+    fields = "ts_code,trade_date,close,pe,pe_ttm,pb,ps,ps_ttm,total_mv,circ_mv,turnover_rate,dv_ttm"
     ok, fail = 0, 0
     for i, d in enumerate(dates, 1):
         fpath = out_dir / f"{d}.parquet"
-        if fpath.exists():
+        if fpath.exists() and not args.force:
             print(f"[{i}/{len(dates)}] {d} 已存在，跳过")
             ok += 1
             continue
