@@ -38,10 +38,13 @@ class TushareFeed(DataFeed):
         if path.exists():
             try:
                 df = pd.read_parquet(path)
-                # parquet 存的是 reset_index 的宽表，读回后恢复 date index
-                if "date" in df.columns and not isinstance(df.index, pd.DatetimeIndex):
+                # parquet 存的是 reset_index 的宽表，读回后统一恢复 date index
+                if "date" in df.columns:
                     df["date"] = pd.to_datetime(df["date"])
-                    df = df.set_index("date").sort_index()
+                    df = df.set_index("date")
+                elif not isinstance(df.index, pd.DatetimeIndex):
+                    raise ValueError("缓存缺少 date 列")
+                df = df.sort_index()
                 logger.info("命中本地缓存: %s (%d 行)", path.name, len(df))
                 return df
             except Exception as e:  # noqa: BLE001 缓存损坏则重拉
@@ -56,7 +59,7 @@ class TushareFeed(DataFeed):
         cached = self._load_cache(symbol, adjust)
         if cached is not None and not cached.empty:
             # 缓存覆盖检查：取缓存最大日期，若小于请求 end 则增量补拉
-            cached_max = cached["date"].max().strftime("%Y%m%d")
+            cached_max = cached.index.max().strftime("%Y%m%d")
             end_ymd = end.replace("-", "")
             if cached_max >= end_ymd:
                 df = cached
