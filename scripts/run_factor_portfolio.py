@@ -30,6 +30,7 @@ from quant.portfolio import (  # noqa: E402
     PortfolioEngine,
     composite_score,
     jaccard_similarity,
+    top_n_weights_industry_capped,
 )
 
 PANEL_DIR = Path(__file__).resolve().parents[1] / "data" / "cache" / "factor_panels"
@@ -66,8 +67,12 @@ def load_universe() -> pd.DataFrame:
     return sb.set_index("ts_code")
 
 
-def build_weights_series(panels, universe, weights: dict, top_n: int) -> pd.DataFrame:
-    """每周截面: 打分 → Top N 等权权重向量（date × stock）。"""
+def build_weights_series(panels, universe, weights: dict, top_n: int,
+                         max_per_industry: int | None = None) -> pd.DataFrame:
+    """每周截面: 打分 → Top N 等权权重向量（date × stock）。
+
+    max_per_industry: 行业上限（None=不限；Kimi 审查 3.1：防组合变行业 β 策略）。
+    """
     rows = {}
     for date in panels["close"].index:
         cross = pd.DataFrame({
@@ -85,9 +90,15 @@ def build_weights_series(panels, universe, weights: dict, top_n: int) -> pd.Data
         if len(cross) < top_n * 3:
             continue
         score = composite_score(cross, weights, universe["industry"])
-        top = score.nlargest(top_n)
+        if max_per_industry:
+            w_row = top_n_weights_industry_capped(
+                score, top_n, universe["industry"], max_per_industry)
+        else:
+            top = score.nlargest(top_n)
+            w_row = pd.Series(0.0, index=score.index)
+            w_row[top.index] = 1.0 / top_n
         w = pd.Series(0.0, index=panels["close"].columns)
-        w[top.index] = 1.0 / top_n
+        w[w_row.index] = w_row
         rows[date] = w
     return pd.DataFrame(rows).T
 
@@ -102,6 +113,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="因子选股组合回测（五因子 vs 三因子）")
     ap.add_argument("--top-n", type=int, default=8, help="持仓只数（实盘约束 5-8）")
     ap.add_argument("--capital", type=float, default=20_000.0)
+    ap.add_argument("--max-per-industry", type=int, default=None,
+                    help="行业上限（None=不限；建议 3，防组合变行业 β 策略）")
     args = ap.parse_args()
 
     panels = load_panels(PANEL_DIR)
@@ -114,7 +127,8 @@ def main() -> None:
     overlap_series = pd.Series(index=prices.index, dtype=float)
 
     for label, weights in [("五因子", WEIGHTS_FIVE), ("三因子", WEIGHTS_THREE)]:
-        w = build_weights_series(panels, universe, weights, args.top_n)
+        w = build_weights_series(panels, universe, weights, args.top_n,
+                                 args.max_per_industry)
         r = PortfolioEngine(Config()).run(prices, prices, w,
                                           initial_capital=args.capital, cash_buffer=0.05)
         results[label] = r
@@ -126,8 +140,8 @@ def main() -> None:
               f"持仓数 {m.get('final_position_count', '?')}")
 
     # Top-N 重合度（每周两版选出股票集合的 Jaccard）
-    w5 = build_weights_series(panels, universe, WEIGHTS_FIVE, args.top_n)
-    w3 = build_weights_series(panels, universe, WEIGHTS_THREE, args.top_n)
+    w5 = build_weights_series(panels, universe, WEIGHTS_FIVE, args.top_n, args.max_per_industry)
+    w3 = build_weights_series(panels, universe, WEIGHTS_THREE, args.top_n, args.max_per_industry)
     for date in w5.index.intersection(w3.index):
         s5 = set(w5.loc[date][w5.loc[date] > 0].index)
         s3 = set(w3.loc[date][w3.loc[date] > 0].index)

@@ -9,6 +9,7 @@ from quant.portfolio.scoring import (
     composite_score,
     jaccard_similarity,
     top_n_weights,
+    top_n_weights_industry_capped,
 )
 
 WEIGHTS = {"low_turnover": 0.50, "low_pb": 0.30, "high_dividend": 0.20}
@@ -71,6 +72,42 @@ class TestTopNWeights:
         w = top_n_weights(scores, top_n=1, universe=pd.Index(["B", "C"]))
         assert w["B"] == pytest.approx(1.0)
         assert "A" not in w  # A 被 universe 过滤，不在结果中
+
+
+class TestIndustryCap:
+    """行业上限约束（Kimi 审查 3.1：防组合变行业 β 策略）。"""
+
+    def test_cap_limits_per_industry(self):
+        """高分股同属一行业时，同一行业最多取 max_per_industry 只。"""
+        scores = pd.Series({"A": 1.0, "B": 0.9, "C": 0.8, "D": 0.7, "E": 0.6})
+        industry = pd.Series({"A": "银行", "B": "银行", "C": "银行", "D": "电气", "E": "化工"})
+        w = top_n_weights_industry_capped(scores, top_n=4, industry_map=industry,
+                                          max_per_industry=2)
+        picked = set(w[w > 0].index)
+        # 银行最多 2 只；电气/化工各 1 只
+        assert len(picked) == 4
+        banks = picked & {"A", "B", "C"}
+        assert len(banks) == 2
+
+    def test_cap_falls_back_to_next_best(self):
+        """行业满额后顺延到次优股票。"""
+        scores = pd.Series({"A": 1.0, "B": 0.9, "C": 0.8, "D": 0.1})
+        industry = pd.Series({"A": "银行", "B": "银行", "C": "电气", "D": "化工"})
+        w = top_n_weights_industry_capped(scores, top_n=3, industry_map=industry,
+                                          max_per_industry=1)
+        picked = set(w[w > 0].index)
+        # 银行只能取 A（1 只），B 被跳过，D 补位
+        assert "A" in picked and "B" not in picked and "D" in picked
+
+    def test_unknown_industry_pass(self):
+        """未知行业不占上限名额（放行），但已知行业仍受限制。"""
+        scores = pd.Series({"A": 1.0, "B": 0.9, "C": 0.8})
+        industry = pd.Series({"A": "银行", "B": None, "C": "银行"})
+        w = top_n_weights_industry_capped(scores, top_n=3, industry_map=industry,
+                                          max_per_industry=1)
+        picked = set(w[w > 0].index)
+        # B 无行业放行；C 受银行名额限制（A 已占）被跳过
+        assert picked == {"A", "B"}
 
 
 class TestJaccard:

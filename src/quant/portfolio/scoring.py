@@ -73,3 +73,38 @@ def top_n_weights(scores: pd.Series, top_n: int,
     w = pd.Series(0.0, index=s.index)
     w[top.index] = 1.0 / top_n
     return w
+
+
+def top_n_weights_industry_capped(
+    scores: pd.Series,
+    top_n: int,
+    industry_map: pd.Series,
+    max_per_industry: int,
+) -> pd.Series:
+    """行业上限约束的 Top N 选股（Kimi 审查 3.1 修复）。
+
+    防"多因子同向指向单一行业（如银行）→ 组合变成行业 β 策略"。
+    按得分从高到低遍历，同一行业最多取 max_per_industry 只。
+    """
+    s = scores.dropna()
+    if len(s) < top_n:
+        top_n = len(s)
+    if top_n == 0:
+        return pd.Series(dtype=float)
+    ind_map = industry_map.to_dict()
+    picked: list = []
+    counts: dict = {}
+    for stock in s.sort_values(ascending=False).index:
+        if len(picked) >= top_n:
+            break
+        i = ind_map.get(stock)
+        if i is None or (isinstance(i, float) and pd.isna(i)):
+            picked.append(stock)  # 未知行业不占名额限制（保守放行）
+            continue
+        if counts.get(i, 0) < max_per_industry:
+            picked.append(stock)
+            counts[i] = counts.get(i, 0) + 1
+    w = pd.Series(0.0, index=s.index)
+    if picked:
+        w[picked] = 1.0 / len(picked)
+    return w

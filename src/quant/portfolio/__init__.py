@@ -7,6 +7,7 @@ from .scoring import (
     composite_score,
     jaccard_similarity,
     top_n_weights,
+    top_n_weights_industry_capped,
 )
 
 __all__ = [
@@ -14,6 +15,7 @@ __all__ = [
     "PortfolioResult",
     "composite_score",
     "top_n_weights",
+    "top_n_weights_industry_capped",
     "jaccard_similarity",
     "FACTOR_BUILDERS",
     "FINANCIAL_INDUSTRIES",
