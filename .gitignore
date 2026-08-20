@@ -13,7 +13,8 @@ venv/
 
 # data
 data/cache/
-data/output/
+data/output/*
+!data/output/*.md
 *.csv.bak
 
 # ide
