@@ -8,6 +8,8 @@ from quant.backtest.metrics import (
     annualized_return,
     annualized_volatility,
     calmar_ratio,
+    compute_metrics,
+    infer_periods_per_year,
     max_drawdown,
     max_drawdown_duration,
     sharpe_ratio,
@@ -56,6 +58,48 @@ class TestSharpe:
         # 每日 +1%，无波动 -> 年化收益 = 1.01^252 - 1，波动率≈0
         eq = pd.Series(100 * 1.01 ** np.arange(252))
         assert sharpe_ratio(eq) == 0.0  # 分母为 0 -> 0
+
+
+class TestPeriodsPerYear:
+    """P6 年化口径回归（Kimi 审查：周频 equity 曾走日频 252，年化放大 ~4.85×）。"""
+
+    def test_infer_daily(self):
+        idx = pd.bdate_range("2024-01-01", periods=10)
+        assert infer_periods_per_year(idx) == 252
+
+    def test_infer_weekly(self):
+        idx = pd.date_range("2024-01-01", periods=10, freq="W-FRI")
+        assert infer_periods_per_year(idx) == 52
+
+    def test_infer_monthly(self):
+        idx = pd.date_range("2024-01-01", periods=10, freq="ME")
+        assert infer_periods_per_year(idx) == 12
+
+    def test_weekly_annualized_return(self):
+        """182 行周频 equity（3.5 年）: 年化 = (1+total)^(52/182) - 1。"""
+        idx = pd.date_range("2023-01-06", periods=182, freq="W-FRI")
+        equity = pd.Series(100 * 1.001 ** np.arange(182), index=idx)
+        total = equity.iloc[-1] / equity.iloc[0] - 1
+        expected = (1 + total) ** (52 / 182) - 1
+        assert annualized_return(equity, 52) == pytest.approx(expected)
+
+    def test_compute_metrics_infers_weekly(self):
+        """compute_metrics 对周频数据自动推断 ppy=52（不再默认 252）。"""
+        idx = pd.date_range("2023-01-06", periods=52, freq="W-FRI")
+        equity = pd.Series(100 * 1.002 ** np.arange(52), index=idx)
+        m = compute_metrics(equity)
+        assert m["periods_per_year"] == 52
+        total = equity.iloc[-1] / equity.iloc[0] - 1
+        assert m["annual_return"] == pytest.approx(total, abs=1e-5)  # round(6) 容差
+
+    def test_weekly_sharpe_lower_than_daily_claim(self):
+        """同一净值路径，周频夏普应显著低于日频口径（P6 核心断言）。"""
+        idx_w = pd.date_range("2023-01-06", periods=182, freq="W-FRI")
+        equity = pd.Series(np.cumprod(1 + np.random.default_rng(0).normal(0.002, 0.03, 182)),
+                           index=idx_w)
+        sharpe_wrong = sharpe_ratio(equity, periods_per_year=252)  # 旧口径（bug）
+        sharpe_right = sharpe_ratio(equity, periods_per_year=52)   # 正确口径
+        assert sharpe_right < sharpe_wrong
 
 
 class TestWinRateAndProfitFactor:
