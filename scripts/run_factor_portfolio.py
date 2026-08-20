@@ -26,27 +26,19 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from quant.config import Config  # noqa: E402
-from quant.factors.processing import ep_transform, winsorize, zscore  # noqa: E402
-from quant.portfolio import PortfolioEngine  # noqa: E402
+from quant.portfolio import (  # noqa: E402
+    PortfolioEngine,
+    composite_score,
+    jaccard_similarity,
+)
 
 PANEL_DIR = Path(__file__).resolve().parents[1] / "data" / "cache" / "factor_panels"
 STOCK_BASIC = Path(__file__).resolve().parents[1] / "data" / "cache" / "stock_basic.parquet"
-
-# 金融行业（PS 口径对金融股怪异，置中性 —— Kimi 定稿前提）
-FINANCIAL_INDUSTRIES = {"银行", "证券", "保险", "多元金融", "非银金融"}
 
 # 两套权重（Kimi 定稿表）
 WEIGHTS_FIVE = {"low_turnover": 0.40, "low_pb": 0.20, "high_dividend": 0.15,
                 "ep": 0.10, "low_ps": 0.10}
 WEIGHTS_THREE = {"low_turnover": 0.50, "low_pb": 0.30, "high_dividend": 0.20}
-
-FACTOR_BUILDERS = {
-    "low_turnover": lambda f: f * -1.0,       # 低换手
-    "low_pb": lambda f: f * -1.0,             # 低PB
-    "high_dividend": lambda f: f * 1.0,       # 高股息
-    "ep": lambda f: ep_transform(f),          # E/P（pe>0 过滤）
-    "low_ps": lambda f: f * -1.0,             # 低PS
-}
 
 
 def load_panels(panel_dir: Path) -> dict[str, pd.DataFrame]:
@@ -74,23 +66,6 @@ def load_universe() -> pd.DataFrame:
     return sb.set_index("ts_code")
 
 
-def composite_score(cross: pd.DataFrame, weights: dict,
-                    universe: pd.DataFrame) -> pd.Series:
-    """单截面合成得分（越大越好）。cross: ts_code × factor 原始值。"""
-    score = pd.Series(0.0, index=cross.index)
-    for fname, w in weights.items():
-        f = FACTOR_BUILDERS[fname](cross[fname])
-        # winsorize（MAD）→ zscore
-        f = winsorize(f)
-        f = zscore(f)
-        # 金融股 PS 置中性（Kimi 定稿前提）
-        if fname == "low_ps":
-            ind = cross.index.map(universe["industry"])
-            f = f.where(~ind.isin(FINANCIAL_INDUSTRIES), 0.0)
-        score = score + w * f
-    return score
-
-
 def build_weights_series(panels, universe, weights: dict, top_n: int) -> pd.DataFrame:
     """每周截面: 打分 → Top N 等权权重向量（date × stock）。"""
     rows = {}
@@ -109,7 +84,7 @@ def build_weights_series(panels, universe, weights: dict, top_n: int) -> pd.Data
         cross = cross.dropna(subset=["close"])
         if len(cross) < top_n * 3:
             continue
-        score = composite_score(cross, weights, universe)
+        score = composite_score(cross, weights, universe["industry"])
         top = score.nlargest(top_n)
         w = pd.Series(0.0, index=panels["close"].columns)
         w[top.index] = 1.0 / top_n
