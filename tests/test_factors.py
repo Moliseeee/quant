@@ -5,7 +5,14 @@ import pandas as pd
 import pytest
 
 from quant.factors.ic import ic_summary, quantile_analysis, rank_ic
-from quant.factors.processing import neutralize, standard_factor_pipeline, winsorize, zscore
+from quant.factors.processing import (
+    adjusted_forward_return,
+    ep_transform,
+    neutralize,
+    standard_factor_pipeline,
+    winsorize,
+    zscore,
+)
 
 
 class TestWinsorize:
@@ -77,6 +84,50 @@ class TestRankIC:
         assert s["mean_ic"] == pytest.approx(0.05)
         assert s["positive_ratio"] == 1.0
         assert s["n_days"] == 30
+
+
+class TestEPTransform:
+    """E/P 口径（Kimi 审查修复：负 PE 亏损股不参与排序）。"""
+
+    def test_negative_pe_excluded(self):
+        pe = pd.Series([10.0, -5.0, 20.0, 0.0, 30.0])
+        ep = ep_transform(pe)
+        # 负 PE 和 0 置 NaN，正 PE 取倒数
+        assert ep.isna().sum() == 2
+        assert ep.iloc[0] == pytest.approx(0.1)
+
+    def test_lower_pe_higher_ep(self):
+        pe = pd.Series([5.0, 10.0, 20.0])
+        ep = ep_transform(pe)
+        # E/P 越大 = 越便宜（低 PE）
+        assert ep.iloc[0] > ep.iloc[1] > ep.iloc[2]
+
+
+class TestAdjustedForwardReturn:
+    """复权远期收益（Kimi 审查修复：未复权收益漏分红，低估股息因子）。"""
+
+    def test_dividend_included(self):
+        # 股票 A: 期间分红（adj 从 1.0 升到 1.1），未复权价不变
+        # 复权收益应反映分红：fwd = 1.1/1.0 - 1 = +10%（未复权算则是 0%）
+        close = pd.DataFrame({"A": [10.0, 10.0]},
+                             index=pd.bdate_range("2024-01-01", periods=2))
+        adj = pd.DataFrame({"A": [1.0, 1.1]}, index=close.index)
+        fwd = adjusted_forward_return(close, adj)
+        assert fwd.iloc[0, 0] == pytest.approx(0.10)  # 含分红
+
+    def test_no_dividend_plain_return(self):
+        close = pd.DataFrame({"A": [10.0, 11.0]},
+                             index=pd.bdate_range("2024-01-01", periods=2))
+        adj = pd.DataFrame({"A": [1.0, 1.0]}, index=close.index)
+        fwd = adjusted_forward_return(close, adj)
+        assert fwd.iloc[0, 0] == pytest.approx(0.10)
+
+    def test_last_row_nan(self):
+        close = pd.DataFrame({"A": [10.0, 10.5]},
+                             index=pd.bdate_range("2024-01-01", periods=2))
+        adj = pd.DataFrame({"A": [1.0, 1.0]}, index=close.index)
+        fwd = adjusted_forward_return(close, adj)
+        assert fwd.iloc[-1, 0] != fwd.iloc[-1, 0]  # 最后一期无未来，NaN
 
 
 class TestQuantileAnalysis:

@@ -25,7 +25,11 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from quant.factors.ic import ic_summary, quantile_analysis, rank_ic  # noqa: E402
-from quant.factors.processing import neutralize  # noqa: E402
+from quant.factors.processing import (  # noqa: E402
+    adjusted_forward_return,
+    ep_transform,
+    neutralize,
+)
 from scipy import stats  # noqa: E402
 
 PANEL_DIR = Path(__file__).resolve().parents[1] / "data" / "cache" / "factor_panels"
@@ -75,20 +79,11 @@ def build_factors(panels: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
         f = panels[col].astype(float)
         if direction == "ep":
             # E/P 口径: 仅盈利股（pe>0），取倒数；亏损股置 NaN（不参与排序）
-            f = f.where(f > 0)
-            f = 1.0 / f
+            f = ep_transform(f)
         else:
             f = f * direction
         factors[name] = f
     return factors
-
-
-def adjusted_forward_return(panels: dict[str, pd.DataFrame]) -> pd.DataFrame:
-    """复权远期收益（Kimi 审查 ① 修复）:
-    fwd = (close×adj).shift(-1) / (close×adj) - 1（含分红再投资的近似）
-    """
-    adj_close = panels["close"].astype(float) * panels["adj_factor"].astype(float)
-    return adj_close.shift(-1) / adj_close - 1
 
 
 def load_industry_map() -> pd.Series:
@@ -147,7 +142,7 @@ def main() -> None:
 
     panels = load_panels(PANEL_DIR)
     industry_map = load_industry_map()
-    fwd = adjusted_forward_return(panels)
+    fwd = adjusted_forward_return(panels["close"], panels["adj_factor"])
     factors = build_factors(panels)
 
     # ========== 1. 因子 IC 汇总 ==========
