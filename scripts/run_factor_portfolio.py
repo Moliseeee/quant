@@ -26,6 +26,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from quant.config import Config  # noqa: E402
+from quant.data import load_panels, load_universe  # noqa: E402
 from quant.portfolio import (  # noqa: E402
     PortfolioEngine,
     build_weight_series,
@@ -40,31 +41,6 @@ STOCK_BASIC = Path(__file__).resolve().parents[1] / "data" / "cache" / "stock_ba
 WEIGHTS_FIVE = {"low_turnover": 0.40, "low_pb": 0.20, "high_dividend": 0.15,
                 "ep": 0.10, "low_ps": 0.10}
 WEIGHTS_THREE = {"low_turnover": 0.50, "low_pb": 0.30, "high_dividend": 0.20}
-
-
-def load_panels(panel_dir: Path) -> dict[str, pd.DataFrame]:
-    files = sorted(panel_dir.glob("*.parquet"))
-    frames = {f.stem: pd.read_parquet(f).set_index("ts_code") for f in files}
-    dates = sorted(frames.keys())
-    all_codes = sorted(set().union(*[set(frames[d].index) for d in dates]))
-    cols = ["close", "pe_ttm", "pb", "ps_ttm", "total_mv", "turnover_rate", "dv_ttm", "adj_factor"]
-    panels = {}
-    for col in cols:
-        m = pd.DataFrame(index=pd.DatetimeIndex(pd.to_datetime(dates), name="date"),
-                         columns=all_codes, dtype=float)
-        for d in dates:
-            s = frames[d].get(col)
-            if s is not None:
-                m.loc[pd.Timestamp(d), s.index] = s
-        panels[col] = m
-    return panels
-
-
-def load_universe() -> pd.DataFrame:
-    """股票池: 当前上市 + 行业映射 + ST 标记。"""
-    sb = pd.read_parquet(STOCK_BASIC)
-    sb["is_st"] = sb["name"].astype(str).str.contains("ST|退", na=False)
-    return sb.set_index("ts_code")
 
 
 def main() -> None:
@@ -83,7 +59,7 @@ def main() -> None:
     if args.start or args.end:
         for col in panels:
             panels[col] = panels[col].loc[args.start or "2000-01-01": args.end or "2999-12-31"]
-    universe = load_universe()
+    universe = load_universe(STOCK_BASIC)
     # 复权价（分红计入）作为组合价格 —— v3 口径
     prices = panels["close"].astype(float) * panels["adj_factor"].astype(float)
 

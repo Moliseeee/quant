@@ -1,8 +1,9 @@
-"""data 子包：数据源抽象 + 质量控制。"""
+"""data 子包：数据源抽象 + 质量控制 + 面板加载。"""
 
 from .akshare_feed import AkShareFeed
 from .base import DataFeed
 from .csv_feed import CSVFeed, get_feed
+from .panels import PANEL_COLUMNS, load_panels, load_universe
 from .quality import (
     TUSHARE_COL_MAP,
     compute_limit_prices,
@@ -23,4 +24,7 @@ __all__ = [
     "compute_limit_prices",
     "detect_suspensions",
     "TUSHARE_COL_MAP",
+    "load_panels",
+    "load_universe",
+    "PANEL_COLUMNS",
 ]
