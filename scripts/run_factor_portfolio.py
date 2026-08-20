@@ -28,9 +28,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from quant.config import Config  # noqa: E402
 from quant.portfolio import (  # noqa: E402
     PortfolioEngine,
+    build_weight_series,
     composite_score,
     jaccard_similarity,
-    top_n_weights_industry_capped,
 )
 
 PANEL_DIR = Path(__file__).resolve().parents[1] / "data" / "cache" / "factor_panels"
@@ -67,48 +67,6 @@ def load_universe() -> pd.DataFrame:
     return sb.set_index("ts_code")
 
 
-def build_weights_series(panels, universe, weights: dict, top_n: int,
-                         max_per_industry: int | None = None) -> pd.DataFrame:
-    """每周截面: 打分 → Top N 等权权重向量（date × stock）。
-
-    max_per_industry: 行业上限（None=不限；Kimi 审查 3.1：防组合变行业 β 策略）。
-    """
-    rows = {}
-    for date in panels["close"].index:
-        cross = pd.DataFrame({
-            "low_turnover": panels["turnover_rate"].loc[date],
-            "low_pb": panels["pb"].loc[date],
-            "high_dividend": panels["dv_ttm"].loc[date],
-            "ep": panels["pe_ttm"].loc[date],
-            "low_ps": panels["ps_ttm"].loc[date],
-            "close": panels["close"].loc[date],   # 停牌过滤用
-        })
-        # 过滤 ST / 停牌（close 缺失）/ 北交所
-        cross = cross[~cross.index.map(universe["is_st"]).fillna(True)]
-        cross = cross[~cross.index.str.endswith(".BJ")]
-        cross = cross.dropna(subset=["close"])
-        if len(cross) < top_n * 3:
-            continue
-        score = composite_score(cross, weights, universe["industry"])
-        if max_per_industry:
-            w_row = top_n_weights_industry_capped(
-                score, top_n, universe["industry"], max_per_industry)
-        else:
-            top = score.nlargest(top_n)
-            w_row = pd.Series(0.0, index=score.index)
-            w_row[top.index] = 1.0 / top_n
-        w = pd.Series(0.0, index=panels["close"].columns)
-        w[w_row.index] = w_row
-        rows[date] = w
-    return pd.DataFrame(rows).T
-
-
-def jaccard_similarity(a: set, b: set) -> float:
-    if not a and not b:
-        return 1.0
-    return len(a & b) / len(a | b)
-
-
 def main() -> None:
     ap = argparse.ArgumentParser(description="因子选股组合回测（五因子 vs 三因子）")
     ap.add_argument("--top-n", type=int, default=8, help="持仓只数（实盘约束 5-8）")
@@ -127,7 +85,7 @@ def main() -> None:
     overlap_series = pd.Series(index=prices.index, dtype=float)
 
     for label, weights in [("五因子", WEIGHTS_FIVE), ("三因子", WEIGHTS_THREE)]:
-        w = build_weights_series(panels, universe, weights, args.top_n,
+        w = build_weight_series(panels, universe, weights, args.top_n,
                                  args.max_per_industry)
         r = PortfolioEngine(Config()).run(prices, prices, w,
                                           initial_capital=args.capital, cash_buffer=0.05)
@@ -140,8 +98,8 @@ def main() -> None:
               f"持仓数 {m.get('final_position_count', '?')}")
 
     # Top-N 重合度（每周两版选出股票集合的 Jaccard）
-    w5 = build_weights_series(panels, universe, WEIGHTS_FIVE, args.top_n, args.max_per_industry)
-    w3 = build_weights_series(panels, universe, WEIGHTS_THREE, args.top_n, args.max_per_industry)
+    w5 = build_weight_series(panels, universe, WEIGHTS_FIVE, args.top_n, args.max_per_industry)
+    w3 = build_weight_series(panels, universe, WEIGHTS_THREE, args.top_n, args.max_per_industry)
     for date in w5.index.intersection(w3.index):
         s5 = set(w5.loc[date][w5.loc[date] > 0].index)
         s3 = set(w3.loc[date][w3.loc[date] > 0].index)

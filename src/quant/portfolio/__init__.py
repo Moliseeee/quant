@@ -4,6 +4,7 @@ from .engine import PortfolioEngine, PortfolioResult
 from .scoring import (
     FACTOR_BUILDERS,
     FINANCIAL_INDUSTRIES,
+    build_weight_series,
     composite_score,
     jaccard_similarity,
     top_n_weights,
@@ -16,6 +17,7 @@ __all__ = [
     "composite_score",
     "top_n_weights",
     "top_n_weights_industry_capped",
+    "build_weight_series",
     "jaccard_similarity",
     "FACTOR_BUILDERS",
     "FINANCIAL_INDUSTRIES",

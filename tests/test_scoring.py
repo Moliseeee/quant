@@ -6,6 +6,7 @@ import pytest
 
 from quant.portfolio.scoring import (
     FINANCIAL_INDUSTRIES,
+    build_weight_series,
     composite_score,
     jaccard_similarity,
     top_n_weights,
@@ -108,6 +109,55 @@ class TestIndustryCap:
         picked = set(w[w > 0].index)
         # B 无行业放行；C 受银行名额限制（A 已占）被跳过
         assert picked == {"A", "B"}
+
+
+class TestBuildWeightSeries:
+    """从面板构造周频权重序列（脚本核心逻辑下沉，端到端覆盖）。"""
+
+    @staticmethod
+    def make_panels() -> tuple[dict, pd.DataFrame]:
+        dates = pd.bdate_range("2024-01-01", periods=3)
+        stocks = [f"S{i:02d}" for i in range(12)]  # 12 只：6 银行 + 6 电气
+        rng = np.random.default_rng(42)
+        panels = {}
+        for col in ["close", "turnover_rate", "pb", "dv_ttm", "pe_ttm", "ps_ttm"]:
+            panels[col] = pd.DataFrame(
+                rng.uniform(1, 30, (3, 12)), index=dates, columns=stocks)
+        # A(S00) 恒为最优（低换手/低PB/高股息）
+        panels["turnover_rate"].loc[:, :] = 10.0
+        panels["turnover_rate"]["S00"] = 0.5
+        panels["pb"].loc[:, :] = 5.0
+        panels["pb"]["S00"] = 0.8
+        panels["dv_ttm"].loc[:, :] = 0.01
+        panels["dv_ttm"]["S00"] = 0.08
+        universe = pd.DataFrame({
+            "industry": ["银行"] * 6 + ["电气"] * 6,
+            "is_st": [False] * 12,
+        }, index=stocks)
+        return panels, universe
+
+    def test_weekly_weights_generated(self):
+        panels, universe = self.make_panels()
+        w = build_weight_series(panels, universe, WEIGHTS, top_n=3)
+        assert len(w) == 3  # 每周一行
+        assert w.sum(axis=1).max() == pytest.approx(1.0)  # 权重和 ≤1
+        # S00 应每期入选（最优股）
+        assert (w["S00"] > 0).all()
+
+    def test_industry_cap_applied(self):
+        panels, universe = self.make_panels()
+        # 12 只股票 6 银行 6 电气，top_n=5 无上限时银行可能全选；上限 2 则银行 ≤2
+        w = build_weight_series(panels, universe, WEIGHTS, top_n=5, max_per_industry=2)
+        banks = {f"S{i:02d}" for i in range(6)}
+        for date in w.index:
+            picked = set(w.loc[date][w.loc[date] > 0].index)
+            assert len(picked & banks) <= 2
+
+    def test_st_filtered(self):
+        panels, universe = self.make_panels()
+        universe.loc["S00", "is_st"] = True  # 最优股变 ST
+        w = build_weight_series(panels, universe, WEIGHTS, top_n=3)
+        assert (w["S00"] == 0).all()  # ST 股永不入选
 
 
 class TestJaccard:

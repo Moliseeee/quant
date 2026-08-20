@@ -75,6 +75,52 @@ def top_n_weights(scores: pd.Series, top_n: int,
     return w
 
 
+def build_weight_series(
+    panels: dict[str, pd.DataFrame],
+    universe: pd.DataFrame,
+    weights: dict[str, float],
+    top_n: int,
+    max_per_industry: int | None = None,
+) -> pd.DataFrame:
+    """从周频因子面板构造每周 Top-N 等权权重序列（date × stock）。
+
+    Args:
+        panels: {列名: date×stock DataFrame}，须含 turnover_rate/pb/dv_ttm/pe_ttm/ps_ttm/close
+        universe: stock_basic DataFrame（index=ts_code，含 industry/is_st 列）
+        weights: 因子权重（FACTOR_BUILDERS 的键）
+        top_n: 持仓只数
+        max_per_industry: 行业上限（None=不限；防组合变行业 β 策略）
+
+    流程（无前视）: 每周截面 → 过滤 ST/北交所/停牌 → 合成打分 → Top N → 等权。
+    """
+    rows = {}
+    for date in panels["close"].index:
+        cross = pd.DataFrame({
+            "low_turnover": panels["turnover_rate"].loc[date],
+            "low_pb": panels["pb"].loc[date],
+            "high_dividend": panels["dv_ttm"].loc[date],
+            "ep": panels["pe_ttm"].loc[date],
+            "low_ps": panels["ps_ttm"].loc[date],
+            "close": panels["close"].loc[date],  # 停牌过滤用
+        })
+        # 过滤 ST / 停牌（close 缺失）/ 北交所
+        cross = cross[~cross.index.map(universe["is_st"]).fillna(True)]
+        cross = cross[~cross.index.str.endswith(".BJ")]
+        cross = cross.dropna(subset=["close"])
+        if len(cross) < top_n * 3:
+            continue
+        score = composite_score(cross, weights, universe["industry"])
+        if max_per_industry:
+            w_row = top_n_weights_industry_capped(
+                score, top_n, universe["industry"], max_per_industry)
+        else:
+            w_row = top_n_weights(score, top_n)
+        w = pd.Series(0.0, index=panels["close"].columns)
+        w[w_row.index] = w_row
+        rows[date] = w
+    return pd.DataFrame(rows).T
+
+
 def top_n_weights_industry_capped(
     scores: pd.Series,
     top_n: int,
