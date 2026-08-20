@@ -41,6 +41,7 @@ class Trade:
     cost: TradeCost
     net_amount: float    # 实际资金流（买入为负，卖出为正）
     pnl: float | None = None  # 平仓盈亏（SELL 时配对计算）
+    symbol: str = ""     # 标的代码（组合引擎用，单标的为空）
 
     def to_dict(self) -> dict:
         d = {
