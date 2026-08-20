@@ -74,6 +74,11 @@ class PortfolioEngine:
 
         # 对齐输入
         close = close.sort_index()
+        # 计值价前向填充：停牌/数据缺失期按最后已知价计值（机构常规），
+        # 避免持仓股票某周无价导致净值 NaN 传播
+        close = close.ffill()
+        # 执行价**不** ffill：close 缺失 = 停牌，必须跳过成交（保持 NaN 语义），
+        # 否则停牌周会按前值"成交"——虚增可交易性
         open_prices = open_prices.reindex(close.index)
         weights = weights.reindex(close.index).fillna(0.0)
 
@@ -146,7 +151,9 @@ class PortfolioEngine:
                         continue
                     px = float(close.loc[date, stock])
                     if px <= 0 or np.isnan(px):
-                        pending[stock] = 0  # 停牌/无价：目标置 0（不买）
+                        # 停牌/无价：维持当前持仓（不产生买卖意图），
+                        # 而非置 0 清仓——否则价格恢复后会被错误卖出
+                        pending[stock] = shares.get(stock, 0)
                         continue
                     target_value = budget * w
                     raw = target_value / (px * (1 + rate_total) + slip)

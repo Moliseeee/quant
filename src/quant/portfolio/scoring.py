@@ -40,7 +40,9 @@ def composite_score(
     for fname, w in weights.items():
         if fname not in cross.columns:
             continue
-        f = FACTOR_BUILDERS[fname](cross[fname])
+        builder = FACTOR_BUILDERS.get(fname)
+        # 基础因子走方向构造器；extra 因子（如 rev_1m）已按"越大越好"构造，直接用
+        f = builder(cross[fname]) if builder else cross[fname]
         f = zscore(winsorize(f))
         if fname == "low_ps" and industry_map is not None:
             ind = cross.index.map(industry_map)
@@ -81,15 +83,17 @@ def build_weight_series(
     weights: dict[str, float],
     top_n: int,
     max_per_industry: int | None = None,
+    extra_factors: dict[str, pd.DataFrame] | None = None,
 ) -> pd.DataFrame:
     """从周频因子面板构造每周 Top-N 等权权重序列（date × stock）。
 
     Args:
         panels: {列名: date×stock DataFrame}，须含 turnover_rate/pb/dv_ttm/pe_ttm/ps_ttm/close
         universe: stock_basic DataFrame（index=ts_code，含 industry/is_st 列）
-        weights: 因子权重（FACTOR_BUILDERS 的键）
+        weights: 因子权重（FACTOR_BUILDERS 的键 + extra_factors 的键）
         top_n: 持仓只数
         max_per_industry: 行业上限（None=不限；防组合变行业 β 策略）
+        extra_factors: 附加因子面板 {因子名: date×stock}（如反转/动量，用 close 构造）
 
     流程（无前视）: 每周截面 → 过滤 ST/北交所/停牌 → 合成打分 → Top N → 等权。
     """
@@ -103,6 +107,9 @@ def build_weight_series(
             "low_ps": panels["ps_ttm"].loc[date],
             "close": panels["close"].loc[date],  # 停牌过滤用
         })
+        if extra_factors:
+            for fname, fpanel in extra_factors.items():
+                cross[fname] = fpanel.loc[date]
         # 过滤 ST / 停牌（close 缺失）/ 北交所
         cross = cross[~cross.index.map(universe["is_st"]).fillna(True)]
         cross = cross[~cross.index.str.endswith(".BJ")]

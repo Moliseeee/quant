@@ -96,3 +96,41 @@ class TestCostsAndEquity:
         r = engine.run(close, open_, weights)
         for key in ["total_return", "sharpe", "max_drawdown", "win_rate"]:
             assert key in r.metrics
+
+
+class TestSuspension:
+    """停牌语义（2026-08 修复）：停牌期持仓维持，恢复后不被错误清仓。"""
+
+    def test_suspension_keeps_position(self):
+        idx = pd.bdate_range("2024-01-01", periods=5)
+        close = pd.DataFrame({
+            "A": [10.0, 10.0, np.nan, np.nan, 12.0],  # A 第 3-4 天停牌
+            "B": [20.0, 20.5, 21.0, 21.5, 22.0],
+        }, index=idx)
+        open_ = close.copy()
+        weights = pd.DataFrame(np.nan, index=idx, columns=["A", "B"])
+        weights.iloc[0] = [0.5, 0.5]   # 第 1 天决定建仓 A/B → 第 2 天执行
+        weights.iloc[2] = [0.5, 0.5]   # 第 3 天调仓决定（A 停牌中）→ 第 4 天执行
+        r = PortfolioEngine(Config()).run(close, open_, weights, initial_capital=10000)
+        # A 停牌期间不得产生卖出意图；恢复后第 4 天仍持仓
+        sells_a = [t for t in r.trades if t.action == "SELL" and t.symbol == "A"]
+        buys_a = [t for t in r.trades if t.action == "BUY" and t.symbol == "A"]
+        assert len(buys_a) == 1   # 仅第 2 天建仓一次
+        assert len(sells_a) == 0  # 停牌未导致错误卖出
+        assert r.equity.notna().all()  # 净值停牌期按最后价计值，无 NaN
+
+    def test_na_price_execution_skipped(self):
+        """执行日价格 NaN（停牌）时交易被跳过，不崩溃。
+
+        建仓决定在第 1 天收盘，第 2 天执行遇停牌 → 买入挂起（不成交、
+        不崩溃）；后续权重归零 → 无交易。这是正确行为：停牌无法成交。
+        """
+        idx = pd.bdate_range("2024-01-01", periods=4)
+        close = pd.DataFrame({"A": [10.0, np.nan, 11.0, 11.5]}, index=idx)
+        open_ = close.copy()
+        weights = pd.DataFrame(np.nan, index=idx, columns=["A"])
+        weights.iloc[0] = [1.0]
+        weights.iloc[2] = [0.0]  # 第 3 天决定清仓 A → 第 4 天执行（价格已恢复，但未持仓）
+        r = PortfolioEngine(Config()).run(close, open_, weights, initial_capital=10000)
+        assert r.equity.notna().all()
+        # 停牌错过建仓 → 未持仓 → 清仓意图无 diff → 0 交易（正确）

@@ -41,6 +41,9 @@ STOCK_BASIC = Path(__file__).resolve().parents[1] / "data" / "cache" / "stock_ba
 WEIGHTS_FIVE = {"low_turnover": 0.40, "low_pb": 0.20, "high_dividend": 0.15,
                 "ep": 0.10, "low_ps": 0.10}
 WEIGHTS_THREE = {"low_turnover": 0.50, "low_pb": 0.30, "high_dividend": 0.20}
+# 四因子（风格互补候选）: 加入 1 个月反转（candidate_factors 验证 ICIR +0.40、与现有相关 0.18-0.24）
+WEIGHTS_FOUR_REVERSAL = {"low_turnover": 0.40, "low_pb": 0.25, "high_dividend": 0.15,
+                         "rev_1m": 0.20}
 
 
 def main() -> None:
@@ -53,6 +56,8 @@ def main() -> None:
                     help="调仓频率（biweekly = 隔周调仓，降摩擦）")
     ap.add_argument("--start", type=str, default=None, help="起始日期 YYYY-MM-DD（分段验证用）")
     ap.add_argument("--end", type=str, default=None, help="截止日期 YYYY-MM-DD")
+    ap.add_argument("--include-reversal", action="store_true",
+                    help="加入 1 个月反转因子（风格互补候选，四因子版）")
     args = ap.parse_args()
 
     panels = load_panels(PANEL_DIR)
@@ -63,13 +68,24 @@ def main() -> None:
     # 复权价（分红计入）作为组合价格 —— v3 口径
     prices = panels["close"].astype(float) * panels["adj_factor"].astype(float)
 
-    print(f"=== 因子选股组合回测 Top {args.top_n} [{args.rebalance}] ===")
+    extra_factors = None
+    if args.include_reversal:
+        # 1 个月反转做多: -(过去4周收益)（A股 2023-26 反转市，candidate_factors 验证 ICIR +0.40）
+        mom_4w = prices / prices.shift(4) - 1
+        extra_factors = {"rev_1m": -mom_4w}
+
+    print(f"=== 因子选股组合回测 Top {args.top_n} [{args.rebalance}]"
+          f"{'+反转' if args.include_reversal else ''} ===")
     results = {}
     overlap_series = pd.Series(index=prices.index, dtype=float)
 
-    for label, weights in [("五因子", WEIGHTS_FIVE), ("三因子", WEIGHTS_THREE)]:
+    weights_sets = [("五因子", WEIGHTS_FIVE), ("三因子", WEIGHTS_THREE)]
+    if args.include_reversal:
+        weights_sets = [("三因子", WEIGHTS_THREE), ("四因子+反转", WEIGHTS_FOUR_REVERSAL)]
+
+    for label, weights in weights_sets:
         w = build_weight_series(panels, universe, weights, args.top_n,
-                                args.max_per_industry)
+                                args.max_per_industry, extra_factors)
         if args.rebalance == "biweekly":
             w = w.copy()
             w.iloc[1::2] = np.nan  # 隔周不调仓（NaN 行 = 无决策）
@@ -96,10 +112,10 @@ def main() -> None:
     # 报告落盘
     report = [f"# 因子选股组合回测报告（Top {args.top_n}）", "",
               f"- 方法: 周频截面打分（winsorize→中性化→zscore→加权）→ Top{args.top_n} 等权，T+1 复权价执行",
-              f"- 五因子: 低换手0.40/低PB0.20/高股息0.15/E/P0.10/低PS0.10",
-              f"- 三因子: 低换手0.50/低PB0.30/高股息0.20", "",
-              "| 版本 | 总收益 | 年化 | 夏普 | 最大回撤 | 换手 | 交易笔数 |", "|---|---|---|---|---|---|---|"]
-    for label in ["五因子", "三因子"]:
+              f"- 三因子: 低换手0.50/低PB0.30/高股息0.20" + ("；+反转: rev_1m 0.20" if args.include_reversal else ""),
+              "", "| 版本 | 总收益 | 年化 | 夏普 | 最大回撤 | 换手 | 交易笔数 |",
+              "|---|---|---|---|---|---|---|"]
+    for label in results:
         m = results[label].metrics
         report.append(f"| {label} | {m['total_return']*100:+.2f}% | {m['annual_return']*100:+.2f}% "
                       f"| {m['sharpe']:.2f} | {m['max_drawdown']*100:.1f}% | {m['turnover']:.1f} "
