@@ -76,6 +76,11 @@ def main() -> None:
             if df is None or df.empty:
                 print(f"[{i}/{len(dates)}] {d} 空数据（非交易日）")
                 continue
+            # adj_factor（复权因子）：远期收益必须用复权价计算（Kimi 审查 ② 修复，
+            # 未复权收益会漏掉现金分红，系统性低估高股息因子）
+            af = pro.adj_factor(trade_date=d)
+            if af is not None and not af.empty:
+                df = df.merge(af[["ts_code", "adj_factor"]], on="ts_code", how="left")
             df.to_parquet(fpath, index=False)
             print(f"[{i}/{len(dates)}] {d} → {len(df)} 只股票")
             ok += 1
