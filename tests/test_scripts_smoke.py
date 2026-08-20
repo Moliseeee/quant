@@ -18,6 +18,7 @@ SCRIPTS = [
     "check_survivorship.py",
     "run_backtest.py",
     "candidate_factors.py",
+    "market_turnover_analysis.py",
 ]
 
 
