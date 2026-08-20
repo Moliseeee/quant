@@ -17,6 +17,7 @@ SCRIPTS = [
     "fetch_stock_basic.py",
     "check_survivorship.py",
     "run_backtest.py",
+    "candidate_factors.py",
 ]
 
 
