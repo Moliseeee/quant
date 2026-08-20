@@ -109,7 +109,10 @@ def build_weight_series(
         active = weights
         if regime_weights is not None and market_turnover is not None \
                 and turnover_threshold is not None:
-            hi = float(market_turnover.loc[date]) > turnover_threshold
+            th = (float(turnover_threshold.loc[date])
+                  if isinstance(turnover_threshold, pd.Series)
+                  else float(turnover_threshold))
+            hi = float(market_turnover.loc[date]) > th
             active = regime_weights[bool(hi)]
         cross = pd.DataFrame({
             "low_turnover": panels["turnover_rate"].loc[date],

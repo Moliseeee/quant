@@ -35,12 +35,15 @@ WEIGHTS_NO_TURNOVER = {"low_pb": 0.20 / 0.55, "high_dividend": 0.15 / 0.55,
                        "ep": 0.10 / 0.55, "low_ps": 0.10 / 0.55}
 
 
-def run_version(panels, universe, prices, regime=None, threshold=None, top_n=8):
-    """跑一个版本，返回 (equity, trades, metrics)。regime=(市场换手率序列, {True:高,False:低})"""
+def run_version(panels, universe, prices, regime=None, top_n=8):
+    """跑一个版本，返回 (equity, trades, metrics)。
+
+    regime = (市场换手率序列, {True:高换手权重, False:低换手权重}, 阈值序列或 float)
+    """
     if regime is None:
         w = build_weight_series(panels, universe, WEIGHTS_FIVE, top_n, 3)
     else:
-        mkt_turnover, regime_weights = regime
+        mkt_turnover, regime_weights, threshold = regime
         w = build_weight_series(panels, universe, WEIGHTS_FIVE, top_n, 3,
                                 market_turnover=mkt_turnover,
                                 turnover_threshold=threshold,
@@ -63,23 +66,36 @@ def main() -> None:
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--top-n", type=int, default=8)
+    ap.add_argument("--threshold-mode", choices=["train_median", "rolling"],
+                    default="train_median",
+                    help="train_median=2023训练段中位数；rolling=滚动52周0.7分位（K3 裁决，一次性定死）")
     args = ap.parse_args()
 
     panels = load_panels(PANEL_DIR)
     universe = load_universe(STOCK_BASIC)
     prices = panels["close"].astype(float) * panels["adj_factor"].astype(float)
 
-    # 阈值 = 2023 训练段市场换手率中位数（样本外纪律：不在全样本调参）
+    # 市场换手率序列
     mkt_turnover = panels["turnover_rate"].mean(axis=1)
-    train_mt = mkt_turnover.loc["2023-01-01":"2023-12-31"].dropna()
-    threshold = float(train_mt.median())
-    print(f"市场换手率阈值（2023 训练段中位数）: {threshold:.3f} | "
-          f"全程中位数 {mkt_turnover.median():.3f}（样本外不动）")
-    regime = (mkt_turnover, {True: WEIGHTS_NO_TURNOVER, False: WEIGHTS_FIVE})
+
+    if args.threshold_mode == "rolling":
+        # K3 裁决: 滚动 52 周 0.7 分位（窗口/分位一次性定死，永不在样本上调；
+        # 用历史窗口计算 = 无前视；min_periods=26 让 2023 年初有值）
+        threshold_series = mkt_turnover.rolling(52, min_periods=26).quantile(0.7)
+        threshold_desc = "滚动52周0.7分位（K3 裁决定死）"
+    else:
+        # 2023 训练段中位数（样本外纪律：不在全样本调参）
+        train_mt = mkt_turnover.loc["2023-01-01":"2023-12-31"].dropna()
+        threshold_series = pd.Series(float(train_mt.median()), index=mkt_turnover.index)
+        threshold_desc = f"2023训练段中位数 {train_mt.median():.3f}"
+
+    print(f"阈值模式: {threshold_desc}")
+    regime = (mkt_turnover, {True: WEIGHTS_NO_TURNOVER, False: WEIGHTS_FIVE},
+              threshold_series)
 
     print(f"\n=== 全程（Top{args.top_n}, 双周+行业≤3） ===")
     r_a = run_version(panels, universe, prices, top_n=args.top_n)
-    r_b = run_version(panels, universe, prices, regime=regime, threshold=threshold,
+    r_b = run_version(panels, universe, prices, regime=regime,
                       top_n=args.top_n)
     report("A. 无条件五因子", r_a)
     report("B. 条件化(高换手去低换手)", r_b)
@@ -91,11 +107,12 @@ def main() -> None:
         sub_panels = {col: df.loc[s:e] for col, df in panels.items()}
         sub_prices = prices.loc[s:e]
         sub_mt = mkt_turnover.loc[s:e]
-        regime_sub = (sub_mt, {True: WEIGHTS_NO_TURNOVER, False: WEIGHTS_FIVE})
+        sub_th = threshold_series.loc[s:e]
+        regime_sub = (sub_mt, {True: WEIGHTS_NO_TURNOVER, False: WEIGHTS_FIVE}, sub_th)
         print(f"\n  [{seg}]")
         report("  A. 无条件", run_version(sub_panels, universe, sub_prices, top_n=args.top_n))
         report("  B. 条件化", run_version(sub_panels, universe, sub_prices,
-                                         regime=regime_sub, threshold=threshold,
+                                         regime=regime_sub,
                                          top_n=args.top_n))
 
 
