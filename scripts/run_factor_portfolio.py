@@ -73,20 +73,30 @@ def main() -> None:
     ap.add_argument("--capital", type=float, default=20_000.0)
     ap.add_argument("--max-per-industry", type=int, default=None,
                     help="行业上限（None=不限；建议 3，防组合变行业 β 策略）")
+    ap.add_argument("--rebalance", choices=["weekly", "biweekly"], default="weekly",
+                    help="调仓频率（biweekly = 隔周调仓，降摩擦）")
+    ap.add_argument("--start", type=str, default=None, help="起始日期 YYYY-MM-DD（分段验证用）")
+    ap.add_argument("--end", type=str, default=None, help="截止日期 YYYY-MM-DD")
     args = ap.parse_args()
 
     panels = load_panels(PANEL_DIR)
+    if args.start or args.end:
+        for col in panels:
+            panels[col] = panels[col].loc[args.start or "2000-01-01": args.end or "2999-12-31"]
     universe = load_universe()
     # 复权价（分红计入）作为组合价格 —— v3 口径
     prices = panels["close"].astype(float) * panels["adj_factor"].astype(float)
 
-    print(f"=== 因子选股组合回测 Top {args.top_n} ===")
+    print(f"=== 因子选股组合回测 Top {args.top_n} [{args.rebalance}] ===")
     results = {}
     overlap_series = pd.Series(index=prices.index, dtype=float)
 
     for label, weights in [("五因子", WEIGHTS_FIVE), ("三因子", WEIGHTS_THREE)]:
         w = build_weight_series(panels, universe, weights, args.top_n,
-                                 args.max_per_industry)
+                                args.max_per_industry)
+        if args.rebalance == "biweekly":
+            w = w.copy()
+            w.iloc[1::2] = np.nan  # 隔周不调仓（NaN 行 = 无决策）
         r = PortfolioEngine(Config()).run(prices, prices, w,
                                           initial_capital=args.capital, cash_buffer=0.05)
         results[label] = r
