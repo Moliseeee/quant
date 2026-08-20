@@ -20,6 +20,7 @@ SCRIPTS = [
     "candidate_factors.py",
     "market_turnover_analysis.py",
     "run_regime_portfolio.py",
+    "paper_select.py",
 ]
 
 
