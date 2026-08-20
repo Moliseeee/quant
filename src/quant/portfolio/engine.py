@@ -95,6 +95,8 @@ class PortfolioEngine:
                     if cur > target:
                         sell_shares = cur - target
                         price = float(open_prices.loc[date, stock])
+                        if np.isnan(price) or price <= 0:
+                            continue  # 无价（停牌）→ 挂起持仓，下期再卖
                         cost = self.costs.sell_cost(price, sell_shares)
                         proceeds = price * sell_shares - cost.total
                         cash += proceeds
@@ -110,6 +112,8 @@ class PortfolioEngine:
                     if target > cur:
                         buy_shares = target - cur
                         price = float(open_prices.loc[date, stock])
+                        if np.isnan(price) or price <= 0:
+                            continue  # 无价（停牌）→ 下期再买
                         cost = self.costs.buy_cost(price, buy_shares)
                         need = price * buy_shares + cost.total
                         if cash >= need:
@@ -141,8 +145,8 @@ class PortfolioEngine:
                         pending[stock] = 0  # 清仓
                         continue
                     px = float(close.loc[date, stock])
-                    if px <= 0:
-                        pending[stock] = 0
+                    if px <= 0 or np.isnan(px):
+                        pending[stock] = 0  # 停牌/无价：目标置 0（不买）
                         continue
                     target_value = budget * w
                     raw = target_value / (px * (1 + rate_total) + slip)
