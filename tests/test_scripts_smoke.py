@@ -19,6 +19,7 @@ SCRIPTS = [
     "run_backtest.py",
     "candidate_factors.py",
     "market_turnover_analysis.py",
+    "run_regime_portfolio.py",
 ]
 
 

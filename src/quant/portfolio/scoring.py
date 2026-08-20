@@ -84,6 +84,9 @@ def build_weight_series(
     top_n: int,
     max_per_industry: int | None = None,
     extra_factors: dict[str, pd.DataFrame] | None = None,
+    market_turnover: pd.Series | None = None,
+    turnover_threshold: float | None = None,
+    regime_weights: dict[bool, dict[str, float]] | None = None,
 ) -> pd.DataFrame:
     """从周频因子面板构造每周 Top-N 等权权重序列（date × stock）。
 
@@ -94,11 +97,20 @@ def build_weight_series(
         top_n: 持仓只数
         max_per_industry: 行业上限（None=不限；防组合变行业 β 策略）
         extra_factors: 附加因子面板 {因子名: date×stock}（如反转/动量，用 close 构造）
+        market_turnover: 每周市场换手率序列（D 方案条件化用）
+        turnover_threshold: 市场换手率阈值（训练段定义；>阈值 = 高换手市）
+        regime_weights: {True: 高换手市权重表, False: 低换手市权重表}；
+                        None 时始终用 weights（无条件化）
 
     流程（无前视）: 每周截面 → 过滤 ST/北交所/停牌 → 合成打分 → Top N → 等权。
     """
     rows = {}
     for date in panels["close"].index:
+        active = weights
+        if regime_weights is not None and market_turnover is not None \
+                and turnover_threshold is not None:
+            hi = float(market_turnover.loc[date]) > turnover_threshold
+            active = regime_weights[bool(hi)]
         cross = pd.DataFrame({
             "low_turnover": panels["turnover_rate"].loc[date],
             "low_pb": panels["pb"].loc[date],
@@ -116,7 +128,7 @@ def build_weight_series(
         cross = cross.dropna(subset=["close"])
         if len(cross) < top_n * 3:
             continue
-        score = composite_score(cross, weights, universe["industry"])
+        score = composite_score(cross, active, universe["industry"])
         if max_per_industry:
             w_row = top_n_weights_industry_capped(
                 score, top_n, universe["industry"], max_per_industry)
