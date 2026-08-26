@@ -113,13 +113,15 @@ def align_sentiment_to_weekly(snapshots: pd.DataFrame,
     snap["date_key"] = pd.to_datetime(snap["date_key"])
     snap = snap.sort_values("date_key")
     snap = snap.drop_duplicates(subset=["ts_code", "date_key"], keep="last")
+    # 快照日期副本（merge_asof 的 on 列输出 left 的值，匹配到的快照日期必须单独保留）
+    snap["src_date"] = snap["date_key"]
 
     if universe is not None:
         codes = list(universe.index) if isinstance(universe, pd.DataFrame) else list(universe)
     else:
         codes = sorted(snap["ts_code"].unique())
 
-    keep = ["ts_code", "date_key", "margin_balance", "lhb_net", "lhb_count"]
+    keep = ["ts_code", "date_key", "src_date", "margin_balance", "lhb_net", "lhb_count"]
     out: dict[str, pd.DataFrame] = {}
     for d in weekly_dates:
         d_ts = pd.to_datetime(d)
@@ -131,6 +133,15 @@ def align_sentiment_to_weekly(snapshots: pd.DataFrame,
             by="ts_code",
             direction="backward",
         )
+        # ⚠️ 陈旧值清洗（Codex 审查 2026-08-26 抓出）:
+        # merge_asof backward 会把"最近一次有数据"的快照携带到无数据的周——
+        # 若某股票本周既非两融标的又未上榜，匹配到的 src_date 远早于截面周，
+        # 旧值被 rolling 重复累计。语义修正：
+        #   margin_balance: 非最近一周(6天窗口) → NaN（不在标的池，不参与）
+        #   lhb_net/lhb_count: 非最近一周 → 0（未上榜 = 中性）
+        recent = aligned["src_date"] >= (d_ts - pd.Timedelta(days=6))
+        aligned.loc[~recent, "margin_balance"] = pd.NA
+        aligned.loc[~recent, ["lhb_net", "lhb_count"]] = 0.0
         aligned["date"] = d
         out[d] = aligned
     return out
