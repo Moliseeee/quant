@@ -1,104 +1,88 @@
-# quant — A股量化研究框架（机构级重构版）
+# quant — A股量化研究框架（v1）
 
-> 由 `桌面/量化/` 下的 Kimi 脚本重构而来。旧脚本保持原样未动，本目录是机构级工程化版本。
+机构级 A股量化研究/回测框架：无前视偏差引擎、完整 A股 约束、16+ 绩效指标、因子 IC/IR 验证、walk-forward 样本外验证。
 
-## 与原版相比，修复了什么
+**v1 核心策略**：五因子选股组合（低换手 / 低PB / 高股息 / E/P / 低PS），Top8 双周调仓 + 行业≤3 约束（回测 2023-2026 全区间 +35.02%，夏普 0.98；walk-forward 2023 +14.09% / 2024 +14.05% / 2025-26 -0.71%——**近期段未过样本外门，实盘/加仓需谨慎**）。
 
-| 问题 | 原版（Kimi） | 本版 |
-|---|---|---|
-| 前视偏差 | 当日收盘价算信号又当日成交 | **T+1 成交**（信号 T 日产生，T+1 开盘价执行） |
-| 涨跌停 | 无 | 涨停买不进/跌停卖不出，次日继续尝试 |
-| 停牌 | 无 | 停牌日无法交易 |
-| 交易成本 | 仅佣金+滑点 | 佣金(最低5元)+印花税+过户费+滑点 |
-| 整手约束 | 无 | 买入 100 股整手 |
-| 胜率配对 | 按索引硬配（会错位） | 买卖配对计算真实盈亏 |
-| 绩效指标 | 4 个 | **16+ 个**：夏普/索提诺/卡玛/盈亏比/换手/最长回撤/alpha/beta/IR… |
-| 因子 | 无验证、方向矛盾 | **IC/IR/分层检验 + 行业市值中性化 + winsorize** |
-| 过拟合防护 | 无 | **walk-forward 样本外验证** |
-| 敏感信息 | iFinD 密码明文 | 全部走 `.env`（`.gitignore` 排除） |
-| 工程化 | 无测试无依赖管理 | pytest 42 用例 + pyproject/requirements |
+> ⚠️ **免责声明**：本项目为量化研究学习框架，不构成任何投资建议。回测收益不代表未来表现，因子存在失效风险（2025-26 样本外已为负）。实盘决策风险自负。
+
+## 特性
+
+| 类别 | 内容 |
+|---|---|
+| 无前视 | 信号 T 日收盘产生 → **T+1 成交**（开盘价执行）；财报/情绪数据按公告日 T+1 对齐 |
+| A股约束 | 涨跌停（涨停买不进/跌停卖不出）、停牌、100 股整手、T+1 |
+| 成本模型 | 佣金(万2.5, 最低5元) + 印花税(卖出0.05%) + 过户费(0.001%) + 滑点 |
+| 指标套件 | 16+ 项：夏普/索提诺/卡玛/最大回撤/最长回撤/胜率/盈亏比/换手/alpha/beta/IR |
+| 因子验证 | RankIC / ICIR / t 值 / 行业+市值中性化 / 十分组单调性 / 相关矩阵（防重复下注） |
+| 过拟合防护 | walk-forward 样本外分段验证；模拟盘双组合并行（主/影子） |
+| 工程化 | pytest 123 用例、`.env` 配置（密钥不入库）、日志化、脚本-库分层 |
+
+## 架构
+
+```
+src/quant/
+├── data/          # 数据源（tushare/akshare/csv）+ 面板 + 质量检查
+│   ├── financial.py   # 财务面板（akshare 业绩报表，公告日 T+1 无前视）
+│   └── sentiment.py   # 情绪面板（两融/龙虎榜，T+1 无前视，含陈旧值清洗）
+├── backtest/      # 回测引擎（T+1+约束迭代）、成本、16+ 指标
+├── strategies/    # 技术策略（sma/macd/boll/rsi/breakout）
+├── factors/       # 因子处理（winsorize/zscore/E-P口径/复权收益）+ IC 检验
+│   └── emotion.py     # 情绪因子构造（融资余额变化率/龙虎榜上榜，反向指标）
+├── portfolio/     # 多标的组合引擎（周频再平衡、权重合成、行业约束）
+└── research/      # walk-forward、归因、通用因子面板验证
+scripts/           # CLI 编排（核心逻辑全部在 src/ 库内）
+tests/             # pytest 123 用例（含无前视/停牌/风控死锁回归）
+```
 
 ## 快速开始
 
 ```bash
-cd quant
-uv venv .venv && uv pip install -e ".[dev]"     # 或 pip install -e ".[dev]"
+# 环境（需要 Python 3.11+）
+uv venv .venv && uv pip install -e ".[dev]" -i https://pypi.tuna.tsinghua.edu.cn/simple
+cp .env.example .env   # 填写 TUSHARE_TOKEN（可选，akshare 免 token 可跑）
+
+# 测试
+.venv\Scripts\python.exe -m pytest
+
+# 单标的回测（MACD 示例）
 .venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --strategy macd
-.venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --all   # 全策略对比
-.venv\Scripts\python.exe -m pytest               # 跑测试
+
+# 因子选股组合回测（v1 五因子）
+.venv\Scripts\python.exe scripts\run_factor_portfolio.py --top-n 8 --max-per-industry 3 --rebalance biweekly
+
+# 因子面板验证（财务/情绪因子 IC，正式复跑链路）
+.venv\Scripts\python.exe scripts\validate_factor_panels.py --kind financial --horizons 1 4 13
+.venv\Scripts\python.exe scripts\validate_factor_panels.py --kind sentiment --horizons 1 4
 ```
 
-### 数据源（免费优先，无需付费额度）
+## 数据源（免费优先）
 
-| 数据源 | 费用 | 说明 |
+| 数据源 | 费用 | 用途 |
 |---|---|---|
-| `tushare` | 用户 2120 积分（至 2027-01-21） | **主力**：日线 + adj_factor 复权因子 + `daily_basic`（PE/PB/PS/市值/换手/股息率，选股核心）。复权采用"未复权+因子表"方案，增量更新不污染历史价（Kimi 审查 P4 修复） |
-| `akshare`（默认无 token 时） | 免费、无 token | 备份：东财/新浪公开接口，国内站自动直连绕过代理 |
-| `csv` | 免费 | 本地 CSV（含存量 `v1/ifind_weekly/` 数据） |
+| tushare | 2000+ 积分 | 主力：daily_basic（PE/PB/PS/市值/换手/股息率）+ adj_factor 复权因子 |
+| akshare | 免费免 token | 财务面板（业绩报表）、情绪面板（两融/龙虎榜）、备份行情 |
+| csv | 本地 | 存量数据 |
 
-```bash
-# 显式指定数据源
-.venv\Scripts\python.exe scripts\run_backtest.py --provider tushare --symbol 600744.SH
-```
+## 因子验证结论（2023-2026 周频截面）
 
-### 全市场因子数据抓取（因子研究原料）
+| 因子 | 中性化 ICIR | 状态 |
+|---|---|---|
+| 低换手 | 0.887 | ✅ v1 核心（0.40） |
+| 低PB | 0.523 | ✅ v1（0.20） |
+| 高股息 | 0.527 | ✅ v1（0.15） |
+| E/P | 0.485 | ✅ v1（0.10） |
+| 低PS | 0.371 | ✅ v1（0.10） |
+| 净利增速 | 0.323（4周） | ⏳ v2 候选（组合层未验证） |
+| 质量/成长/动量 | <0.2 或负 | ❌ 截面无效（动量 A股 为负 alpha） |
+| 情绪（融资/龙虎榜反向） | 截面显著但组合层拖累 | ❌ 不进组合（IC 正≠组合有效） |
 
-```bash
-# 抓 2023 至今的周频全市场因子截面（PE/PB/PS/市值/换手/股息率），存 parquet
-.venv\Scripts\python.exe scripts\fetch_factor_data.py --start 20230101 --end 20260723
-# 测试只拉 3 个截面
-.venv\Scripts\python.exe scripts\fetch_factor_data.py --limit 3
-```
+## 已知边界（诚实声明）
 
-输出：`data/cache/factor_panels/<交易日>.parquet`（每个截面 ~5500 只股票），直接供 `quant/factors/` 的 RankIC/ICIR/分层检验使用。
+- **Top8 集中效应**：v1 的 +35% 是 Top8 深度小组合（含集中持有成分）；Top20 分散后 ≈0.15%（alpha 不可规模化）
+- **walk-forward 门未过**：2025-26 样本外 -0.71%，策略近期失效——模拟盘盈利 ≠ 加仓依据
+- 数据仅 2023-2026（约 3.6 年），历史短、参数有拟合风险
 
-### 风控参数（实盘生存第一道防线）
+## License
 
-```bash
-# 止损 8% + 单票仓位 80% + 分级回撤熔断（-10% 仓位减半、-15% 清仓停手等人工复核）
-.venv\Scripts\python.exe scripts\run_backtest.py --symbol 600744.SH --strategy macd \
-    --stop-loss 0.08 --max-position 0.8 --drawdown-stages "0.10,0.5;0.15,0.0"
-```
-
-| 参数 | 说明 |
-|---|---|
-| `--stop-loss` | 固定止损：收盘破成本×N% 次日离场，离场后需新买入信号才进场 |
-| `--trailing-stop` | 移动止盈：收盘破持仓峰值×N% 锁利离场 |
-| `--max-position` | 单笔买入资金上限（0-1），防满仓单票 |
-| `--daily-loss` | 当日亏损熔断：单日亏 N% 次日禁止开新仓 |
-| `--drawdown` | 简单回撤熔断：亏 N% 清仓并永久停手（旧语义） |
-| `--drawdown-stages` | **分级回撤熔断（推荐）**：`"阈值,剩余仓位;阈值,剩余仓位"`，创新高自动恢复满仓 |
-
-实测（600744.SH + MACD, 2023~2026）：
-- 无风控：总收益 -26%，**最大回撤 53%**
-- 有风控：总收益 -20%，**最大回撤 20%**（止损/熔断把灾难性回撤压成可控回撤）
-
-## 模块结构
-
-```
-src/quant/
-├── config.py          # pydantic 配置，敏感信息走环境变量
-├── data/              # DataFeed 抽象（Tushare/CSV）+ 本地缓存 + 数据质检
-├── backtest/
-│   ├── engine.py      # 向量化引擎：T+1 成交、涨跌停/停牌/整手约束、风控钩子
-│   ├── costs.py       # A股成本模型（佣金/印花税/过户费/滑点）
-│   └── metrics.py     # 16+ 绩效指标
-├── strategies/        # 策略接口 + 5 个技术策略（sma/macd/boll/rsi/breakout）
-├── factors/           # winsorize/中性化/标准化 + RankIC/ICIR/分层检验
-└── research/          # walk-forward 样本外验证（防过拟合）
-```
-
-## 使用策略（建议工作流）
-
-1. **因子研究先行**：用 `factors/` 的 IC/IR 检验候选因子有没有预测力
-   （经验阈值：`|mean IC| > 0.02` 且 `ICIR > 0.3` 且 `t > 2`）
-2. **回测**：引擎跑出完整指标，注意真实成本下收益会显著低于"乐观回测"
-3. **walk-forward**：训练段选参 → 样本外验证。**样本外业绩才是真实业绩**
-4. 全部验证通过，再考虑发布/实盘
-
-## 已知限制（Roadmap）
-
-- 0/1 全仓模型；组合级（多标的、权重分配、再平衡）引擎待扩展
-- 涨跌停用"开盘价即涨停/跌停"近似，未处理盘中打开
-- 未建模 T+1 交易制度下的"当日买入当日不可卖"（0/1 模型天然满足）
-- 创业板/科创板 20% 涨跌幅需按标的设置 `limit_pct`
+MIT

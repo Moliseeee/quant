@@ -25,3 +25,12 @@ data/output/*
 # 回测产物
 *.png
 backtest_*.html
+
+# 内部研究文档（不上传 GitHub）
+会审对话/
+REVIEW.md
+模拟盘*.md
+方案_*.md
+本周指导_*.md
+学费锁定*.md
+scripts/_kimi_send.ps1
