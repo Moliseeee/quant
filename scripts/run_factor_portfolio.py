@@ -49,6 +49,8 @@ WEIGHTS_FOUR_REVERSAL = {"low_turnover": 0.40, "low_pb": 0.25, "high_dividend": 
 WEIGHTS_FIVE_EMOTION = {**WEIGHTS_FIVE, "neg_margin_chg_4w": 0.20, "neg_lhb_count_4w": 0.20}
 WEIGHTS_FIVE_MARGIN = {**WEIGHTS_FIVE, "neg_margin_chg_4w": 0.30}
 WEIGHTS_FIVE_LHB = {**WEIGHTS_FIVE, "neg_lhb_count_4w": 0.30}
+# 净利增速版（v2 候选①: 正式流水线 ICIR 0.323@4周，与价值族正交性待相关矩阵确认）
+WEIGHTS_FIVE_PROFIT = {**WEIGHTS_FIVE, "profit_yoy": 0.15}
 
 
 def main() -> None:
@@ -65,6 +67,8 @@ def main() -> None:
                     help="加入 1 个月反转因子（风格互补候选，四因子版）")
     ap.add_argument("--include-emotion", action="store_true",
                     help="加入情绪因子（融资余额变化率/龙虎榜上榜次数，反向指标）")
+    ap.add_argument("--include-profit-yoy", action="store_true",
+                    help="加入净利增速因子（v2 候选①，财务面板）")
     args = ap.parse_args()
 
     panels = load_panels(PANEL_DIR)
@@ -85,10 +89,18 @@ def main() -> None:
         from quant.factors.emotion import build_emotion_factors
         extra_factors = build_emotion_factors(
             Path(__file__).resolve().parents[1] / "data" / "cache" / "sentiment_panels")
+    if args.include_profit_yoy:
+        # 净利增速（财务面板，公告日 T+1 对齐；越大越好）
+        from quant.research.panel_validate import load_wide_panels
+        fp = load_wide_panels(
+            Path(__file__).resolve().parents[1] / "data" / "cache" / "financial_panels",
+            ["profit_yoy"])
+        extra_factors = {"profit_yoy": fp["profit_yoy"]}
 
     print(f"=== 因子选股组合回测 Top {args.top_n} [{args.rebalance}]"
           f"{'+反转' if args.include_reversal else ''}"
-          f"{'+情绪' if args.include_emotion else ''} ===")
+          f"{'+情绪' if args.include_emotion else ''}"
+          f"{'+净利增速' if args.include_profit_yoy else ''} ===")
     results = {}
     overlap_series = pd.Series(index=prices.index, dtype=float)
 
@@ -100,6 +112,9 @@ def main() -> None:
                         ("五因子+融资情绪", WEIGHTS_FIVE_MARGIN),
                         ("五因子+上榜情绪", WEIGHTS_FIVE_LHB),
                         ("五因子+双情绪", WEIGHTS_FIVE_EMOTION)]
+    if args.include_profit_yoy:
+        weights_sets = [("五因子", WEIGHTS_FIVE),
+                        ("五因子+净利增速", WEIGHTS_FIVE_PROFIT)]
 
     for label, weights in weights_sets:
         w = build_weight_series(panels, universe, weights, args.top_n,
