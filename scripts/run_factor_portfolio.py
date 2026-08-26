@@ -44,6 +44,11 @@ WEIGHTS_THREE = {"low_turnover": 0.50, "low_pb": 0.30, "high_dividend": 0.20}
 # 四因子（风格互补候选）: 加入 1 个月反转（candidate_factors 验证 ICIR +0.40、与现有相关 0.18-0.24）
 WEIGHTS_FOUR_REVERSAL = {"low_turnover": 0.40, "low_pb": 0.25, "high_dividend": 0.15,
                          "rev_1m": 0.20}
+# 情绪因子版（2026-08-26 快筛: neg_margin_chg_4w ICIR 0.333 / neg_lhb_count_4w ICIR 0.442，
+# 与现有因子 |ρ|≤0.17 独立。权重 = 五因子原权重 + 情绪加码，composite_score 只比相对排序）
+WEIGHTS_FIVE_EMOTION = {**WEIGHTS_FIVE, "neg_margin_chg_4w": 0.20, "neg_lhb_count_4w": 0.20}
+WEIGHTS_FIVE_MARGIN = {**WEIGHTS_FIVE, "neg_margin_chg_4w": 0.30}
+WEIGHTS_FIVE_LHB = {**WEIGHTS_FIVE, "neg_lhb_count_4w": 0.30}
 
 
 def main() -> None:
@@ -58,6 +63,8 @@ def main() -> None:
     ap.add_argument("--end", type=str, default=None, help="截止日期 YYYY-MM-DD")
     ap.add_argument("--include-reversal", action="store_true",
                     help="加入 1 个月反转因子（风格互补候选，四因子版）")
+    ap.add_argument("--include-emotion", action="store_true",
+                    help="加入情绪因子（融资余额变化率/龙虎榜上榜次数，反向指标）")
     args = ap.parse_args()
 
     panels = load_panels(PANEL_DIR)
@@ -73,15 +80,26 @@ def main() -> None:
         # 1 个月反转做多: -(过去4周收益)（A股 2023-26 反转市，candidate_factors 验证 ICIR +0.40）
         mom_4w = prices / prices.shift(4) - 1
         extra_factors = {"rev_1m": -mom_4w}
+    if args.include_emotion:
+        # 情绪因子（反向指标，已取反为越大越好；sentiment_panels 为 T+1 对齐数据）
+        from quant.factors.emotion import build_emotion_factors
+        extra_factors = build_emotion_factors(
+            Path(__file__).resolve().parents[1] / "data" / "cache" / "sentiment_panels")
 
     print(f"=== 因子选股组合回测 Top {args.top_n} [{args.rebalance}]"
-          f"{'+反转' if args.include_reversal else ''} ===")
+          f"{'+反转' if args.include_reversal else ''}"
+          f"{'+情绪' if args.include_emotion else ''} ===")
     results = {}
     overlap_series = pd.Series(index=prices.index, dtype=float)
 
     weights_sets = [("五因子", WEIGHTS_FIVE), ("三因子", WEIGHTS_THREE)]
     if args.include_reversal:
         weights_sets = [("三因子", WEIGHTS_THREE), ("四因子+反转", WEIGHTS_FOUR_REVERSAL)]
+    if args.include_emotion:
+        weights_sets = [("五因子", WEIGHTS_FIVE),
+                        ("五因子+融资情绪", WEIGHTS_FIVE_MARGIN),
+                        ("五因子+上榜情绪", WEIGHTS_FIVE_LHB),
+                        ("五因子+双情绪", WEIGHTS_FIVE_EMOTION)]
 
     for label, weights in weights_sets:
         w = build_weight_series(panels, universe, weights, args.top_n,
@@ -99,20 +117,23 @@ def main() -> None:
               f"换手 {m['turnover']:.1f}  交易 {m['trade_count']} 笔  "
               f"持仓数 {m.get('final_position_count', '?')}")
 
-    # Top-N 重合度（每周两版选出股票集合的 Jaccard）
-    w5 = build_weight_series(panels, universe, WEIGHTS_FIVE, args.top_n, args.max_per_industry)
-    w3 = build_weight_series(panels, universe, WEIGHTS_THREE, args.top_n, args.max_per_industry)
-    for date in w5.index.intersection(w3.index):
-        s5 = set(w5.loc[date][w5.loc[date] > 0].index)
-        s3 = set(w3.loc[date][w3.loc[date] > 0].index)
+    # Top-N 重合度（每周首末两版选出股票集合的 Jaccard）
+    w_first = build_weight_series(panels, universe, weights_sets[0][1], args.top_n, args.max_per_industry,
+                                  extra_factors)
+    w_last = build_weight_series(panels, universe, weights_sets[-1][1], args.top_n, args.max_per_industry,
+                                 extra_factors)
+    for date in w_first.index.intersection(w_last.index):
+        s5 = set(w_first.loc[date][w_first.loc[date] > 0].index)
+        s3 = set(w_last.loc[date][w_last.loc[date] > 0].index)
         overlap_series.loc[date] = jaccard_similarity(s5, s3)
-    print(f"\nTop-N 重合度（Jaccard）: 均值 {overlap_series.mean():.2f}  "
-          f"中位 {overlap_series.median():.2f}")
+    print(f"\nTop-N 重合度（{weights_sets[0][0]} vs {weights_sets[-1][0]}, Jaccard）: "
+          f"均值 {overlap_series.mean():.2f}  中位 {overlap_series.median():.2f}")
 
     # 报告落盘
     report = [f"# 因子选股组合回测报告（Top {args.top_n}）", "",
               f"- 方法: 周频截面打分（winsorize→中性化→zscore→加权）→ Top{args.top_n} 等权，T+1 复权价执行",
-              f"- 三因子: 低换手0.50/低PB0.30/高股息0.20" + ("；+反转: rev_1m 0.20" if args.include_reversal else ""),
+              f"- 三因子: 低换手0.50/低PB0.30/高股息0.20" + ("；+反转: rev_1m 0.20" if args.include_reversal else "")
+              + ("；+情绪: neg_margin_chg_4w/neg_lhb_count_4w（反向指标，ICIR 0.333/0.442）" if args.include_emotion else ""),
               "", "| 版本 | 总收益 | 年化 | 夏普 | 最大回撤 | 换手 | 交易笔数 |",
               "|---|---|---|---|---|---|---|"]
     for label in results:
