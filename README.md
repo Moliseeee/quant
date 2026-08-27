@@ -50,6 +50,10 @@ cp .env.example .env        # 可选：填 TUSHARE_TOKEN（akshare 免 token 可
 # 因子面板验证（正式复跑链路）
 .venv\Scripts\python.exe scripts\validate_factor_panels.py --kind financial --horizons 1 4 13
 .venv\Scripts\python.exe scripts\validate_factor_panels.py --kind sentiment --horizons 1 4
+
+# v2 因子库增强策略（聚宽在线 IDE 版）
+# 复制 reference/joinquant/v2_factor_library.py 到聚宽 IDE 直接运行：
+#   区间 2020-01-02 ~ 2026-08-25，日频，初始 200000，基准 000300.XSHG
 ```
 
 ## 项目结构
@@ -67,7 +71,12 @@ quant/
 ├── scripts/                 # CLI 入口（fetch/backtest/validate/paper_select）
 ├── tests/                   # pytest 123 用例（无前视/停牌/风控死锁回归）
 ├── reference/               # 参考实现
-│   ├── joinquant/           #   ★ 聚宽在线平台复现（v1 五因子 + v2 因子库增强 + 回测报告）
+│   ├── joinquant/           #   ★ 聚宽在线平台复现（v1 五因子 + v2 因子库增强 + 探针 + 回测报告）
+│   │   ├── v1_five_factor.py        #     v1 五因子（Top8 双周）
+│   │   ├── v2_factor_library.py     #     v2 19 因子（Top20 周频，研究候选）
+│   │   ├── factor_whitelist_probe.py#     线上因子白名单探针
+│   │   ├── alpha_factor_probe.py    #     alpha101/191 全量探针
+│   │   └── backtest_report.md       #     聚宽回测报告
 │   ├── qlib_*.py            #   Qlib 参考
 │   ├── vnpy_*.py            #   vn.py 参考
 │   └── backtrader_sizers.py #   Backtrader 参考
