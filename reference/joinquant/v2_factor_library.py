@@ -284,31 +284,46 @@ def build_factor_series(df, spec):
 def compute_dividend_yield(codes, data_date):
     """用 finance 分红表手动计算股息率（每股分红/股价），替代线上不支持的 divyild。
 
-    取近一年（365 天）内公告的现金分红，累计每股分红，除以当前收盘价。
+    取近一年（365 天）内除权除息/公告的现金分红，累计每股分红，除以当前收盘价。
     无分红/取不到 = NaN（打分中性 0.5）。
+
+    2026-08-27 修正：聚宽线上 finance 没有 STK_DIVIDEND 表（实测报错），
+    正确表名是 STK_XR_XD（除权除息表，字段 dividend_per_share = 每股派息）。
+    若仍失败，打印 dir(finance) 线上真值，不再猜。
     """
     result = {}
+    import pandas as pd
     try:
         from jqdata import finance
         from datetime import timedelta
-        q = query(finance.STK_DIVIDEND).filter(
-            finance.STK_DIVIDEND.code.in_(codes),
-            finance.STK_DIVIDEND.pay_date >= data_date - timedelta(days=365),
-            finance.STK_DIVIDEND.pay_date <= data_date,
-            finance.STK_DIVIDEND.dividend_ratio > 0
+
+        # 优先 STK_XR_XD（除权除息表，2026-08-27 实测修正）
+        q = query(finance.STK_XR_XD).filter(
+            finance.STK_XR_XD.code.in_(codes),
+            finance.STK_XR_XD.ex_dividend_date >= data_date - timedelta(days=365),
+            finance.STK_XR_XD.ex_dividend_date <= data_date,
+            finance.STK_XR_XD.dividend_per_share > 0
         )
         div = finance.run_query(q)
         if div is not None and len(div) > 0:
             for code, grp in div.groupby('code'):
-                per_share = grp['dividend_ratio'].sum()  # 每股派息（元）
+                per_share = grp['dividend_per_share'].sum()  # 每股派息（元）
                 price = get_price(code, end_date=data_date, count=1, fields=['close'])
                 if price is not None and len(price) > 0:
                     px = float(price['close'].iloc[-1])
                     if px and px > 0:
                         result[code] = per_share / px
+            return pd.Series(result).reindex(codes)
     except Exception as e:
-        log.warn('DIVIDEND_FINANCE_FAILED err=%s' % str(e)[:160])
-    import pandas as pd
+        log.warn('DIVIDEND_XR_XD_FAILED err=%s' % str(e)[:160])
+
+    # 兜底：打印线上 finance 模块真实表名（调试一锤定音法），下次直接改对
+    try:
+        from jqdata import finance
+        tables = [a for a in dir(finance) if not a.startswith('_')]
+        log.info('FINANCE_TABLES=%s' % str(tables))
+    except Exception as e2:
+        log.warn('FINANCE_IMPORT_FAILED err=%s' % str(e2)[:120])
     return pd.Series(result).reindex(codes)
 
 
