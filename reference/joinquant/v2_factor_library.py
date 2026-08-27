@@ -304,20 +304,22 @@ def compute_dividend_yield(codes, data_date):
     import pandas as pd
 
     # 1) 首选：直接拉估值表股息率。聚宽本地 SDK 文档明确 get_valuation 有 dividend_ratio。
-    # 在线 IDE 没有 jqdatasdk 包；若全局 get_valuation 不存在，直接降级，不再 import jqdatasdk。
-    try:
-        # 线上若全局有 get_valuation，优先用全局函数。
-        gv = get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
-        if gv is not None and len(gv) > 0 and 'dividend_ratio' in gv.columns:
-            s = gv.dropna(subset=['dividend_ratio']).groupby('code')['dividend_ratio'].last()
-            s = pd.to_numeric(s, errors='coerce')
-            # JQData 文档叫“股息率”，通常是百分比；rank 不关心比例单位，只需截面顺序。
-            log.info('DIVIDEND_GET_VALUATION non_na=%d rows=%d' % (int(s.notna().sum()), len(gv)))
-            if int(s.notna().sum()) >= min(20, max(1, len(codes) // 20)):
-                return s.reindex(codes)
-            log.warn('DIVIDEND_GET_VALUATION_WEAK non_na=%d rows=%d' % (int(s.notna().sum()), len(gv)))
-    except Exception as e:
-        log.warn('DIVIDEND_GET_VALUATION_FAILED err=%s' % str(e)[:200])
+    # 在线 IDE 没有 jqdatasdk 包；若全局 get_valuation 不存在，安静降级，不再 import jqdatasdk。
+    if 'get_valuation' in globals():
+        try:
+            gv = get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
+            if gv is not None and len(gv) > 0 and 'dividend_ratio' in gv.columns:
+                s = gv.dropna(subset=['dividend_ratio']).groupby('code')['dividend_ratio'].last()
+                s = pd.to_numeric(s, errors='coerce')
+                # JQData 文档叫“股息率”，通常是百分比；rank 不关心比例单位，只需截面顺序。
+                log.info('DIVIDEND_GET_VALUATION non_na=%d rows=%d' % (int(s.notna().sum()), len(gv)))
+                if int(s.notna().sum()) >= min(20, max(1, len(codes) // 20)):
+                    return s.reindex(codes)
+                log.warn('DIVIDEND_GET_VALUATION_WEAK non_na=%d rows=%d' % (int(s.notna().sum()), len(gv)))
+        except Exception as e:
+            log.warn('DIVIDEND_GET_VALUATION_FAILED err=%s' % str(e)[:200])
+    else:
+        log.info('DIVIDEND_GET_VALUATION_SKIP reason=get_valuation_not_available')
 
     # 2) 兜底：finance 估值表（不同环境表名可能不同，动态探测）。
     try:
@@ -361,24 +363,23 @@ def compute_dividend_yield(codes, data_date):
         from datetime import timedelta
         table = finance.STK_XR_XD
 
-        # 关键修正：不要在 query 阶段猜日期字段。
-        # 聚宽线上 STK_XR_XD 的 SQLAlchemy 属性名和 run_query 返回列名可能不完全一致；
-        # 先只按 code 拉近似样本，再用 DataFrame.columns 识别真实字段，避免 AttributeError。
-        q = query(table).filter(table.code.in_(codes))
+        # 线上日志已确认真字段：a_xr_date 是 A 股除权除息日；bonus_ratio_rmb 是“10派X元”。
+        # 直接在 query 阶段过滤，避免 run_query 默认最多返回 5000 行导致覆盖不全。
+        start_date = data_date - timedelta(days=365)
+        q = query(table).filter(
+            table.code.in_(codes),
+            table.a_xr_date >= start_date,
+            table.a_xr_date <= data_date,
+            table.bonus_ratio_rmb > 0
+        )
         div = finance.run_query(q)
         if div is None or len(div) == 0:
             log.warn('DIVIDEND_EMPTY table=STK_XR_XD')
             return pd.Series(result).reindex(codes)
 
         cols = list(div.columns)
-        date_candidates = ['a_xr_date', 'x_date', 'xr_date', 'xrd_date', 'ex_dividend_date',
-                           'pay_date', 'plan_announce_date', 'bonus_date', 'report_date',
-                           'pub_date', 'pubDate', 'day', 'date', 'statDate', 'end_date']
-        div_candidates = ['bonus_ratio_rmb', 'at_bonus_ratio_rmb', 'cash_dividend_ratio',
-                          'dividend_per_share', 'cash_dividend', 'cash_div',
-                          'per_share_dividend', 'dividend_ratio']
-        date_f = next((f for f in date_candidates if f in cols), None)
-        div_f = next((f for f in div_candidates if f in cols), None)
+        date_f = 'a_xr_date'
+        div_f = 'bonus_ratio_rmb'
         log.info('STK_XR_XD_DF_COLUMNS=%s' % str(cols))
         log.info('DIVIDEND_FIELDS date_field=%s div_field=%s rows=%d' % (date_f, div_f, len(div)))
 
@@ -388,19 +389,9 @@ def compute_dividend_yield(codes, data_date):
             except Exception:
                 pass
 
-        if div_f is None:
-            log.warn('DIVIDEND_DIV_FIELD_MISSING columns=%s' % str(cols))
+        if date_f not in cols or div_f not in cols:
+            log.warn('DIVIDEND_FIELDS_UNEXPECTED columns=%s' % str(cols))
             return pd.Series(result).reindex(codes)
-
-        # 如果日期字段存在，则只取 data_date 前 365 天；若仍识别不到日期字段，
-        # 先退化为“最近表内记录的累计分红”并保留日志，避免高股息因子完全中性。
-        if date_f is not None:
-            div[date_f] = pd.to_datetime(div[date_f], errors='coerce')
-            end = pd.to_datetime(data_date)
-            start = end - timedelta(days=365)
-            div = div[(div[date_f] >= start) & (div[date_f] <= end)]
-        else:
-            log.warn('DIVIDEND_DATE_FIELD_MISSING_USE_ALL_ROWS columns=%s' % str(cols))
 
         div = div[pd.to_numeric(div[div_f], errors='coerce') > 0]
         if len(div) > 0:
