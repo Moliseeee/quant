@@ -53,4 +53,18 @@ def probe(context):
                 log.warn('FACTOR_FAIL %s|%s err=%s' % (cat, f, str(e)[:80]))
         log.info('GROUP_DONE %s' % cat)
 
+    # 补充: alpha101/alpha191 因子名测试（线上 jqfactor 是否支持）
+    alpha_names = ['alpha_001', 'alpha_002', 'alpha_101', 'alpha_102']
+    for f in alpha_names:
+        try:
+            fv = get_factor_values(securities=codes, factors=[f],
+                                   end_date=context.previous_date, count=1)
+            if fv and f in fv and len(fv[f]) > 0:
+                s = fv[f].iloc[-1]
+                log.info('FACTOR_OK alpha|%s non_na=%d' % (f, int(s.count())))
+            else:
+                log.warn('FACTOR_EMPTY alpha|%s' % f)
+        except Exception as e:
+            log.warn('FACTOR_FAIL alpha|%s err=%s' % (f, str(e)[:80]))
+
     log.info('PROBE_DONE')
