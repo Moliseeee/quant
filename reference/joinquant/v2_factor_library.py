@@ -302,8 +302,12 @@ def compute_dividend_yield(codes, data_date):
 
         # 动态探测字段（聚宽线上表字段以运行时为准）
         attrs = [a for a in dir(table) if not a.startswith('_')]
-        date_candidates = ['xrd_date', 'ex_dividend_date', 'pay_date', 'announce_date']
-        div_candidates = ['dividend_ratio', 'dividend_per_share', 'cash_div', 'cash_dividend']
+        date_candidates = ['xrd_date', 'ex_dividend_date', 'pay_date', 'announce_date',
+                           'plan_announce_date', 'record_date', 'register_date',
+                           'ex_date', 'xr_date', 'dividend_date', 'cash_date',
+                           'divid_ex_date', 'bonus_date', 'declare_date', 'decl_date']
+        div_candidates = ['dividend_ratio', 'dividend_per_share', 'cash_div',
+                          'cash_dividend', 'per_share_dividend', 'cash_dividend_per_share']
         date_f = next((f for f in date_candidates if f in attrs), None)
         div_f = next((f for f in div_candidates if f in attrs), None)
         log.info('STK_XR_XD_FIELDS=%s' % str(attrs))
