@@ -300,35 +300,50 @@ def compute_dividend_yield(codes, data_date):
         from datetime import timedelta
         table = finance.STK_XR_XD
 
-        # 动态探测字段（聚宽线上表字段以运行时为准）
-        attrs = [a for a in dir(table) if not a.startswith('_')]
-        date_candidates = ['xrd_date', 'ex_dividend_date', 'pay_date', 'announce_date',
-                           'plan_announce_date', 'record_date', 'register_date',
-                           'ex_date', 'xr_date', 'dividend_date', 'cash_date',
-                           'divid_ex_date', 'bonus_date', 'declare_date', 'decl_date']
-        div_candidates = ['dividend_ratio', 'dividend_per_share', 'cash_div',
-                          'cash_dividend', 'per_share_dividend', 'cash_dividend_per_share']
-        date_f = next((f for f in date_candidates if f in attrs), None)
-        div_f = next((f for f in div_candidates if f in attrs), None)
-        log.info('STK_XR_XD_FIELDS=%s' % str(attrs))
-        log.info('DIVIDEND_FIELDS date_field=%s div_field=%s' % (date_f, div_f))
-
-        if date_f is None or div_f is None:
-            log.warn('DIVIDEND_FIELDS_MISSING date=%s div=%s' % (date_f, div_f))
+        # 关键修正：不要在 query 阶段猜日期字段。
+        # 聚宽线上 STK_XR_XD 的 SQLAlchemy 属性名和 run_query 返回列名可能不完全一致；
+        # 先只按 code 拉近似样本，再用 DataFrame.columns 识别真实字段，避免 AttributeError。
+        q = query(table).filter(table.code.in_(codes))
+        div = finance.run_query(q)
+        if div is None or len(div) == 0:
+            log.warn('DIVIDEND_EMPTY table=STK_XR_XD')
             return pd.Series(result).reindex(codes)
 
-        col_date = getattr(table, date_f)
-        col_div = getattr(table, div_f)
-        q = query(table).filter(
-            table.code.in_(codes),
-            col_date >= data_date - timedelta(days=365),
-            col_date <= data_date,
-            col_div > 0
-        )
-        div = finance.run_query(q)
-        if div is not None and len(div) > 0:
+        cols = list(div.columns)
+        date_candidates = ['x_date', 'a_xr_date', 'xr_date', 'xrd_date', 'ex_dividend_date',
+                           'pay_date', 'plan_announce_date', 'bonus_date', 'report_date',
+                           'pub_date', 'pubDate', 'day', 'date', 'statDate', 'end_date']
+        div_candidates = ['dividend_ratio', 'dividend_per_share', 'cash_dividend_ratio',
+                          'cash_dividend', 'cash_div', 'per_share_dividend']
+        date_f = next((f for f in date_candidates if f in cols), None)
+        div_f = next((f for f in div_candidates if f in cols), None)
+        log.info('STK_XR_XD_DF_COLUMNS=%s' % str(cols))
+        log.info('DIVIDEND_FIELDS date_field=%s div_field=%s rows=%d' % (date_f, div_f, len(div)))
+
+        if len(div) > 0:
+            try:
+                log.info('STK_XR_XD_SAMPLE=%s' % str(div.head(3).to_dict('records'))[:800])
+            except Exception:
+                pass
+
+        if div_f is None:
+            log.warn('DIVIDEND_DIV_FIELD_MISSING columns=%s' % str(cols))
+            return pd.Series(result).reindex(codes)
+
+        # 如果日期字段存在，则只取 data_date 前 365 天；若仍识别不到日期字段，
+        # 先退化为“最近表内记录的累计分红”并保留日志，避免高股息因子完全中性。
+        if date_f is not None:
+            div[date_f] = pd.to_datetime(div[date_f], errors='coerce')
+            end = pd.to_datetime(data_date)
+            start = end - timedelta(days=365)
+            div = div[(div[date_f] >= start) & (div[date_f] <= end)]
+        else:
+            log.warn('DIVIDEND_DATE_FIELD_MISSING_USE_ALL_ROWS columns=%s' % str(cols))
+
+        div = div[pd.to_numeric(div[div_f], errors='coerce') > 0]
+        if len(div) > 0:
             for code, grp in div.groupby('code'):
-                per_share = grp[div_f].sum()  # 每股派息（元）
+                per_share = pd.to_numeric(grp[div_f], errors='coerce').sum()  # 每股派息（元）
                 price = get_price(code, end_date=data_date, count=1, fields=['close'])
                 if price is not None and len(price) > 0:
                     px = float(price['close'].iloc[-1])
