@@ -69,6 +69,7 @@ quant/
 │   ├── vnpy_*.py            #   vn.py 参考
 │   └── backtrader_sizers.py #   Backtrader 参考
 ├── data/                    # 数据缓存（gitignore）与输出
+├── ARCHITECTURE.md          # 仓库内部架构与目录纪律
 ├── pyproject.toml           # 依赖与打包（editable install）
 ├── .env.example             # 密钥模板（.env 不入库）
 └── LICENSE                  # MIT
