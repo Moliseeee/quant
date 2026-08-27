@@ -189,6 +189,9 @@ def rebalance_impl(context):
         if non_neutral < g.N * 2:
             log.warn('FACTOR_WEAK name=%s non_neutral=%d; still used with many neutral values' %
                      (spec['name'], non_neutral))
+            if spec['name'] == 'high_dividend':
+                log.warn('FACTOR_SKIP name=high_dividend reason=coverage_too_low')
+                continue
         df['score'] += spec['weight'] * r
         active_weight += spec['weight']
         detail.append('%s(w=%.2f,n=%d)' % (spec['name'], spec['weight'], non_neutral))
@@ -282,10 +285,14 @@ def build_factor_series(df, spec):
 
 
 def compute_dividend_yield(codes, data_date):
-    """用 finance 分红表手动计算股息率（每股分红/股价），替代线上不支持的 divyild。
+    """构造高股息因子，替代线上不支持的 style_pro.divyild。
 
-    取近一年（365 天）内除权除息的现金分红，累计每股分红，除以当前收盘价。
-    无分红/取不到 = NaN（打分中性 0.5）。
+    优先级：
+      1) JQData get_valuation 的 dividend_ratio（本地 SDK 文档确认这是“股息率”字段）；
+      2) finance 估值表里的 dividend_ratio；
+      3) finance.STK_XR_XD 除权除息明细兜底。
+
+    无分红/取不到 = NaN（打分阶段覆盖太低会跳过，不污染组合）。
 
     2026-08-27 修正记录：
       - STK_DIVIDEND 表不存在（线上实测 'Finance' object has no attribute 'STK_DIVIDEND'）
@@ -295,6 +302,63 @@ def compute_dividend_yield(codes, data_date):
     """
     result = {}
     import pandas as pd
+
+    # 1) 首选：直接拉估值表股息率。聚宽本地 SDK 文档明确 get_valuation 有 dividend_ratio。
+    try:
+        gv = None
+        try:
+            # 线上若全局有 get_valuation，优先用全局函数。
+            gv = get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
+        except Exception:
+            # 本地 SDK / 线上兼容兜底：尝试从 jqdatasdk 导入。
+            from jqdatasdk import get_valuation as jq_get_valuation
+            gv = jq_get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
+        if gv is not None and len(gv) > 0 and 'dividend_ratio' in gv.columns:
+            s = gv.dropna(subset=['dividend_ratio']).groupby('code')['dividend_ratio'].last()
+            s = pd.to_numeric(s, errors='coerce')
+            # JQData 文档叫“股息率”，通常是百分比；rank 不关心比例单位，只需截面顺序。
+            log.info('DIVIDEND_GET_VALUATION non_na=%d rows=%d' % (int(s.notna().sum()), len(gv)))
+            if int(s.notna().sum()) >= min(20, max(1, len(codes) // 20)):
+                return s.reindex(codes)
+            log.warn('DIVIDEND_GET_VALUATION_WEAK non_na=%d rows=%d' % (int(s.notna().sum()), len(gv)))
+    except Exception as e:
+        log.warn('DIVIDEND_GET_VALUATION_FAILED err=%s' % str(e)[:200])
+
+    # 2) 兜底：finance 估值表（不同环境表名可能不同，动态探测）。
+    try:
+        from jqdata import finance
+        table = None
+        table_name = None
+        for name in ['STK_VALUATION', 'STOCK_VALUATION', 'StockValuation']:
+            if hasattr(finance, name):
+                table = getattr(finance, name)
+                table_name = name
+                break
+        if table is not None and hasattr(table, 'code') and hasattr(table, 'dividend_ratio'):
+            day_col = None
+            for f in ['day', 'date', 'statDate', 'pubDate']:
+                if hasattr(table, f):
+                    day_col = getattr(table, f)
+                    break
+            if day_col is not None:
+                qv = query(table).filter(table.code.in_(codes), day_col <= data_date).order_by(day_col.desc())
+            else:
+                qv = query(table).filter(table.code.in_(codes))
+            val = finance.run_query(qv)
+            if val is not None and len(val) > 0 and 'dividend_ratio' in val.columns:
+                if 'day' in val.columns:
+                    val = val.sort_values(['code', 'day'])
+                s = pd.to_numeric(val.groupby('code')['dividend_ratio'].last(), errors='coerce')
+                log.info('DIVIDEND_FINANCE_VALUATION table=%s non_na=%d rows=%d' %
+                         (table_name, int(s.notna().sum()), len(val)))
+                if int(s.notna().sum()) >= min(20, max(1, len(codes) // 20)):
+                    return s.reindex(codes)
+                log.warn('DIVIDEND_FINANCE_VALUATION_WEAK table=%s non_na=%d rows=%d' %
+                         (table_name, int(s.notna().sum()), len(val)))
+    except Exception as e:
+        log.warn('DIVIDEND_FINANCE_VALUATION_FAILED err=%s' % str(e)[:200])
+
+    # 3) 最后兜底：除权除息明细表。覆盖面可能很低，仅作补救。
     try:
         from jqdata import finance
         from datetime import timedelta
