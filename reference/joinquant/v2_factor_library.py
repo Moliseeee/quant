@@ -304,15 +304,10 @@ def compute_dividend_yield(codes, data_date):
     import pandas as pd
 
     # 1) 首选：直接拉估值表股息率。聚宽本地 SDK 文档明确 get_valuation 有 dividend_ratio。
+    # 在线 IDE 没有 jqdatasdk 包；若全局 get_valuation 不存在，直接降级，不再 import jqdatasdk。
     try:
-        gv = None
-        try:
-            # 线上若全局有 get_valuation，优先用全局函数。
-            gv = get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
-        except Exception:
-            # 本地 SDK / 线上兼容兜底：尝试从 jqdatasdk 导入。
-            from jqdatasdk import get_valuation as jq_get_valuation
-            gv = jq_get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
+        # 线上若全局有 get_valuation，优先用全局函数。
+        gv = get_valuation(codes, end_date=data_date, count=1, fields=['dividend_ratio'])
         if gv is not None and len(gv) > 0 and 'dividend_ratio' in gv.columns:
             s = gv.dropna(subset=['dividend_ratio']).groupby('code')['dividend_ratio'].last()
             s = pd.to_numeric(s, errors='coerce')
@@ -358,7 +353,9 @@ def compute_dividend_yield(codes, data_date):
     except Exception as e:
         log.warn('DIVIDEND_FINANCE_VALUATION_FAILED err=%s' % str(e)[:200])
 
-    # 3) 最后兜底：除权除息明细表。覆盖面可能很低，仅作补救。
+    # 3) 最后兜底：除权除息明细表。
+    # 用户线上日志确认 STK_XR_XD 返回列：a_xr_date 是 A 股除权除息日；bonus_ratio_rmb/at_bonus_ratio_rmb 是现金分红（10派X元）。
+    # 注意：STK_XR_XD.dividend_ratio 不是现金分红字段，样例里是 NaN，不能用于高股息。
     try:
         from jqdata import finance
         from datetime import timedelta
@@ -374,11 +371,12 @@ def compute_dividend_yield(codes, data_date):
             return pd.Series(result).reindex(codes)
 
         cols = list(div.columns)
-        date_candidates = ['x_date', 'a_xr_date', 'xr_date', 'xrd_date', 'ex_dividend_date',
+        date_candidates = ['a_xr_date', 'x_date', 'xr_date', 'xrd_date', 'ex_dividend_date',
                            'pay_date', 'plan_announce_date', 'bonus_date', 'report_date',
                            'pub_date', 'pubDate', 'day', 'date', 'statDate', 'end_date']
-        div_candidates = ['dividend_ratio', 'dividend_per_share', 'cash_dividend_ratio',
-                          'cash_dividend', 'cash_div', 'per_share_dividend']
+        div_candidates = ['bonus_ratio_rmb', 'at_bonus_ratio_rmb', 'cash_dividend_ratio',
+                          'dividend_per_share', 'cash_dividend', 'cash_div',
+                          'per_share_dividend', 'dividend_ratio']
         date_f = next((f for f in date_candidates if f in cols), None)
         div_f = next((f for f in div_candidates if f in cols), None)
         log.info('STK_XR_XD_DF_COLUMNS=%s' % str(cols))
@@ -407,7 +405,12 @@ def compute_dividend_yield(codes, data_date):
         div = div[pd.to_numeric(div[div_f], errors='coerce') > 0]
         if len(div) > 0:
             for code, grp in div.groupby('code'):
-                per_share = pd.to_numeric(grp[div_f], errors='coerce').sum()  # 每股派息（元）
+                cash_sum = pd.to_numeric(grp[div_f], errors='coerce').sum()
+                # STK_XR_XD 的 bonus_ratio_rmb / at_bonus_ratio_rmb 口径是“10派X元”，需除以10变为每股派息。
+                if div_f in ['bonus_ratio_rmb', 'at_bonus_ratio_rmb']:
+                    per_share = cash_sum / 10.0
+                else:
+                    per_share = cash_sum
                 price = get_price(code, end_date=data_date, count=1, fields=['close'])
                 if price is not None and len(price) > 0:
                     px = float(price['close'].iloc[-1])

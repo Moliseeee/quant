@@ -57,6 +57,7 @@ def probe(context):
         log.info('STK_XR_XD_COLUMNS=%s' % str(list(df.columns)))
         if len(df) > 0:
             log.info('STK_XR_XD_SAMPLE=%s' % str(df.head(5).to_dict('records'))[:2000])
+            log.info('STK_XR_XD_HINT date_field=a_xr_date cash_field=bonus_ratio_rmb cash_unit=10派X元_divide_by_10')
     except Exception as e:
         log.warn('STK_XR_XD_PROBE_FAILED err=%s' % str(e)[:500])
     log.info('DIVIDEND_FIELD_PROBE_DONE')
