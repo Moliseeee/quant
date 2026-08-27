@@ -1,5 +1,5 @@
 # v2 因子库增强选股组合 — 聚宽在线 IDE 版
-# 来源: github.com/Moliseeee/quant v1.0.1 后续研究草案
+# 来源: github.com/Moliseeee/quant v2.0.0
 # 用途: 在聚宽在线回测里直接复制运行，挖 jqfactor 因子库形成 v2 候选组合
 #
 # 重要纪律：
@@ -15,7 +15,7 @@
 #   - profit（盈利能力 0.04）→ gross_income_ratio（销售毛利率）
 #   - resvol（残差波动 0.03）→ sharpe_ratio_120（120日夏普，方向 +1 越大越好）
 #   其余 15 因子全部为探针确认可用的 quality/basics/emotion/risk/momentum 类。
-#   白名单实测依据见 会审对话/alpha101_191因子接入方案_20260827.md + 因子使用地图_v2白名单_20260827.md
+#   白名单实测依据见同目录 factor_whitelist_probe.py（线上探针输出）。
 #
 # 推荐回测设置：
 #   区间: 2020-01-02 ~ 2026-08-25
