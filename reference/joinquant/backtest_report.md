@@ -43,7 +43,7 @@
 
 ## 五、复现方法
 
-1. 聚宽 → 新建策略 → 粘贴 `reference/joinquant_v1_five_factor.py`（或 策略库/v1_五因子_聚宽复现版.py）
+1. 聚宽 → 新建策略 → 粘贴 `reference/joinquant/v1_five_factor.py`（v2 候选见同目录 `v2_factor_library.py`）
 2. 回测参数: 2020-01-01 ~ 至今，初始 20 万，基准 000300.XSHG，频率默认（日频）
 3. 运行（耗时约 1.5-2 小时，因子查询较慢）
 
