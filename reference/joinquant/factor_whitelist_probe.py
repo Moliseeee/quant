@@ -2,6 +2,14 @@
 # 用途: 确认线上 get_factor_values 到底支持哪些因子（v2 报 divyild/earnqlty/profit/resvol 无效）
 # 用法: 新建策略 → 粘贴本文件 → 区间选 2024-01-01 ~ 2024-03-01（快）→ 运行 → 看日志
 # 预期: 直接打印每个因子的 non_na 数，一目了然
+#
+# 修复记录 2026-08-27:
+#   get_factor_values 必须从 jqfactor 导入（线上策略里不是全局内置函数，直接调用会
+#   NameError: name 'get_factor_values' is not defined —— 与 v2 主策略里的
+#   from jqfactor import get_factor_values 保持一致）。
+
+from jqfactor import get_factor_values
+
 
 def initialize(context):
     set_benchmark('000300.XSHG')
